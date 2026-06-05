@@ -1,4 +1,4 @@
-import { defaultLedger, defaultSettings } from "./providers";
+import { defaultLedger, defaultSettings } from "./clientConfig";
 import type { AppSettings, CostLedger } from "./types";
 
 const settingsKey = "voice-trainer-settings";

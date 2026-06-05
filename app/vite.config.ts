@@ -1,7 +1,8 @@
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  base: process.env.VITE_BASE_PATH || (mode === "production" ? "/apps/aitutor/" : "/"),
   plugins: [react()],
   server: {
     host: "127.0.0.1"
@@ -9,4 +10,4 @@ export default defineConfig({
   preview: {
     host: "127.0.0.1"
   }
-});
+}));

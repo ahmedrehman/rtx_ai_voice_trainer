@@ -186,6 +186,20 @@ Root directory:
 app
 ```
 
+Base path:
+
+```text
+VITE_BASE_PATH=/
+```
+
+For a mounted path such as `/apps/aitutor`, set:
+
+```text
+VITE_BASE_PATH=/apps/aitutor/
+```
+
+This keeps built asset URLs, service worker registration, and install metadata aligned with the deployed path.
+
 ### Phase 2: Cloudflare Worker API
 
 Add a Worker to hide API keys and call paid providers.

@@ -1,6 +1,6 @@
 export type ProviderId = "browser-demo" | "openai" | "deepgram-elevenlabs" | "azure" | "google";
 
-export type Tab = "chat" | "info" | "settings";
+export type Tab = "chat" | "info" | "settings" | "debug";
 
 export type Trigger = "keyword" | "button" | "manual-text" | "silent";
 
@@ -53,22 +53,55 @@ export type CostBucket = {
 export type CostLedger = Record<ProviderId, CostBucket>;
 
 export type CorrectionInput = {
+  providerId: ProviderId;
   text: string;
   forced: boolean;
   manualText: boolean;
+  speechInput: boolean;
+  voiceOutput: boolean;
   history: ChatMessage[];
   settings: AppSettings;
 };
 
-export type VoiceTrainerProvider = {
+export type CorrectionResult = {
+  providerId: ProviderId;
+  correction: StructuredCorrection;
+  trainerText: string;
+  spokenText: string;
+  cost: CostBucket;
+  debug: {
+    systemPrompt: string;
+    decision: {
+      keywordSent: boolean;
+      shouldRespond: boolean;
+      shouldSpeak: boolean;
+      trigger: Trigger;
+    };
+  };
+};
+
+export type ProviderSummary = {
   id: ProviderId;
   name: string;
   role: string;
   pricingNote: string;
   quality: string;
   productionPath: string;
-  correct: (input: CorrectionInput) => Promise<StructuredCorrection>;
-  estimateCost: (usage: ProviderUsage) => CostBucket;
+};
+
+export type DebugEvent = {
+  id: string;
+  createdAt: string;
+  providerId: ProviderId;
+  systemPrompt: string;
+  request: CorrectionInput;
+  decision: {
+    keywordSent: boolean;
+    shouldRespond: boolean;
+    shouldSpeak: boolean;
+    trigger: Trigger;
+  };
+  response: StructuredCorrection;
 };
 
 export type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;

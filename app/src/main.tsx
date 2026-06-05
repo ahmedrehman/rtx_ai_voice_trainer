@@ -5,6 +5,7 @@ import {
   Bot,
   Check,
   CircleDollarSign,
+  ClipboardList,
   Info,
   Mic,
   MicOff,
@@ -15,9 +16,9 @@ import {
   Volume2,
   VolumeX
 } from "lucide-react";
-import { defaultLedger, getProvider, providers, voiceText } from "./providers";
+import { defaultLedger, providerSummaries } from "./clientConfig";
 import { clearLedger, loadLedger, loadSettings, saveLedger, saveSettings } from "./storage";
-import type { AppSettings, ChatMessage, CostLedger, ProviderId, SpeechRecognitionConstructor, SpeechRecognitionEventLike, SpeechRecognitionLike, Tab } from "./types";
+import type { AppSettings, ChatMessage, CorrectionInput, CorrectionResult, CostBucket, CostLedger, DebugEvent, ProviderId, SpeechRecognitionConstructor, SpeechRecognitionEventLike, SpeechRecognitionLike, Tab } from "./types";
 import "./styles.css";
 
 declare global {
@@ -27,11 +28,16 @@ declare global {
   }
 }
 
+function apiUrl(path: string) {
+  return `${import.meta.env.BASE_URL}${path.replace(/^\//, "")}`;
+}
+
 function App() {
   const [tab, setTab] = useState<Tab>("chat");
   const [providerId, setProviderId] = useState<ProviderId>("browser-demo");
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
   const [draft, setDraft] = useState("");
   const [voiceTalk, setVoiceTalk] = useState(true);
   const [alwaysListen, setAlwaysListen] = useState(false);
@@ -43,13 +49,17 @@ function App() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const shouldRestartRef = useRef(false);
 
-  const provider = getProvider(providerId);
+  const provider = providerSummaries.find((item) => item.id === providerId) ?? providerSummaries[0];
   const speechSupported = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
   const recentContext = useMemo(() => messages.slice(-8), [messages]);
 
   useEffect(() => {
     saveLedger(ledger);
   }, [ledger]);
+
+  useEffect(() => {
+    void refreshCosts();
+  }, []);
 
   useEffect(() => {
     saveSettings(settings);
@@ -60,8 +70,10 @@ function App() {
   }, [alwaysListen, voiceTalk]);
 
   useEffect(() => {
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    if (import.meta.env.PROD && "serviceWorker" in navigator) {
+      navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, {
+        scope: import.meta.env.BASE_URL
+      }).catch(() => undefined);
     }
   }, []);
 
@@ -84,14 +96,7 @@ function App() {
     setStatus("Speech stopped");
   }
 
-  function recordCost(input: string, output: string, usedSpeechInput: boolean, usedSpeechOutput: boolean) {
-    const bucket = provider.estimateCost({
-      inputChars: input.length,
-      outputChars: output.length,
-      usedSpeechInput,
-      usedSpeechOutput
-    });
-
+  function recordCost(bucket: CostBucket) {
     setLedger((current) => ({
       ...current,
       [providerId]: {
@@ -102,6 +107,18 @@ function App() {
         ttsCost: current[providerId].ttsCost + bucket.ttsCost
       }
     }));
+  }
+
+  async function refreshCosts() {
+    const response = await fetch(apiUrl("/api/costs"));
+    if (!response.ok) return;
+    setLedger(await response.json() as CostLedger);
+  }
+
+  async function resetCosts() {
+    const response = await fetch(apiUrl("/api/costs"), { method: "DELETE" });
+    setLedger(response.ok ? await response.json() as CostLedger : defaultLedger);
+    clearLedger();
   }
 
   async function submitUtterance(rawText: string, options: { forced?: boolean; manualText?: boolean; speechInput?: boolean } = {}) {
@@ -116,32 +133,53 @@ function App() {
       createdAt: new Date().toISOString()
     };
 
-    const correction = await provider.correct({
+    const request: CorrectionInput = {
+      providerId,
       text: trimmed,
       forced: Boolean(options.forced || answerNow),
       manualText: Boolean(options.manualText),
+      speechInput: Boolean(options.speechInput),
+      voiceOutput: optionalVoice,
       history: recentContext,
       settings
+    };
+
+    const response = await fetch(apiUrl("/api/correct"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request)
     });
 
-    const spokenText = voiceText(correction, settings.shortVoiceHints);
-    const trainerText = correction.notes.length
-      ? `${correction.corrected}\n${correction.notes.join(" ")}`
-      : correction.corrected;
+    if (!response.ok) {
+      setStatus("Server correction failed");
+      return;
+    }
+
+    const result = await response.json() as CorrectionResult;
+    const correction = result.correction;
 
     const nextMessages: ChatMessage[] = [learnerMessage];
+    const debugEvent: DebugEvent = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      providerId,
+      systemPrompt: result.debug.systemPrompt,
+      request,
+      decision: result.debug.decision,
+      response: correction
+    };
 
     if (correction.shouldRespond) {
       nextMessages.push({
         id: crypto.randomUUID(),
         speaker: "trainer",
-        text: trainerText,
+        text: result.trainerText,
         correction,
         spoken: optionalVoice,
         createdAt: new Date().toISOString()
       });
-      speak(spokenText);
-      recordCost(trimmed, trainerText, Boolean(options.speechInput), optionalVoice);
+      speak(result.spokenText);
+      recordCost(result.cost);
       setStatus(correction.trigger === "keyword" ? "Answered by keyword" : "Answered by request");
     } else {
       nextMessages.push({
@@ -156,6 +194,7 @@ function App() {
     }
 
     setMessages((current) => [...current, ...nextMessages].slice(-40));
+    setDebugEvents((current) => [debugEvent, ...current].slice(0, 50));
     setDraft("");
     setAnswerNow(false);
   }
@@ -214,11 +253,6 @@ function App() {
     setStatus("Listening stopped");
   }
 
-  function resetCosts() {
-    setLedger(defaultLedger);
-    clearLedger();
-  }
-
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -243,6 +277,10 @@ function App() {
             <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>
               <Settings2 size={18} />
               Settings
+            </button>
+            <button className={tab === "debug" ? "active" : ""} onClick={() => setTab("debug")}>
+              <ClipboardList size={18} />
+              Debug
             </button>
           </nav>
         </div>
@@ -294,6 +332,10 @@ function App() {
 
         {tab === "settings" && (
           <SettingsTab settings={settings} updateSettings={updateSettings} speechSupported={speechSupported} />
+        )}
+
+        {tab === "debug" && (
+          <DebugTab events={debugEvents} clearEvents={() => setDebugEvents([])} settings={settings} providerId={providerId} />
         )}
       </section>
     </main>
@@ -420,7 +462,7 @@ function InfoTab({
           <h2>Providers</h2>
         </div>
         <div className="provider-list">
-          {providers.map((provider) => (
+          {providerSummaries.map((provider) => (
             <button
               key={provider.id}
               className={providerId === provider.id ? "provider selected" : "provider"}
@@ -452,7 +494,7 @@ function InfoTab({
             </tr>
           </thead>
           <tbody>
-            {providers.map((provider) => (
+            {providerSummaries.map((provider) => (
               <tr key={provider.id}>
                 <td>{provider.name}</td>
                 <td>{ledger[provider.id].turns}</td>
@@ -514,6 +556,71 @@ function SettingsTab({
         <Toggle label="Short voice hints" enabled={settings.shortVoiceHints} onChange={(value) => updateSettings({ shortVoiceHints: value })} />
         <p className="browser-support">{speechSupported ? "Browser speech recognition is available." : "Browser speech recognition is not available here."}</p>
       </section>
+    </div>
+  );
+}
+
+function DebugTab({
+  events,
+  clearEvents,
+  settings,
+  providerId
+}: {
+  events: DebugEvent[];
+  clearEvents: () => void;
+  settings: AppSettings;
+  providerId: ProviderId;
+}) {
+  return (
+    <div className="debug-view">
+      <div className="chat-header">
+        <div>
+          <h2>Debug Console</h2>
+          <p>Inspect system prompts, requests, answers, and app decisions.</p>
+        </div>
+        <button className="secondary-action" onClick={clearEvents}>Clear</button>
+      </div>
+
+      <section className="info-section">
+        <h2>Current System Prompt</h2>
+        <pre>{events[0]?.systemPrompt || "Server prompt appears after the first correction request."}</pre>
+        <p>Provider: {providerId}</p>
+      </section>
+
+      <div className="debug-events">
+        {events.length === 0 ? (
+          <section className="info-section">
+            <p>No debug events yet. Send or speak a sentence to inspect the flow.</p>
+          </section>
+        ) : (
+          events.map((event) => (
+            <section className="info-section debug-event" key={event.id}>
+              <div className="debug-event-header">
+                <h2>{event.decision.trigger}</h2>
+                <span>{new Date(event.createdAt).toLocaleTimeString()}</span>
+              </div>
+              <div className="decision-grid">
+                <span>keyword: {String(event.decision.keywordSent)}</span>
+                <span>respond: {String(event.decision.shouldRespond)}</span>
+                <span>speak: {String(event.decision.shouldSpeak)}</span>
+                <span>provider: {event.providerId}</span>
+              </div>
+              <details open>
+                <summary>Request</summary>
+                <pre>{JSON.stringify(event.request, null, 2)}</pre>
+              </details>
+              <details open>
+                <summary>Response</summary>
+                <pre>{JSON.stringify(event.response, null, 2)}</pre>
+              </details>
+              <details>
+                <summary>System Prompt</summary>
+                <pre>{event.systemPrompt}</pre>
+              </details>
+            </section>
+          ))
+        )}
+      </div>
     </div>
   );
 }

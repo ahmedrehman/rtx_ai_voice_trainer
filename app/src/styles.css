@@ -428,13 +428,171 @@ th {
   margin-top: 16px;
 }
 
+.debug-view {
+  display: grid;
+  gap: 18px;
+}
+
+.debug-events {
+  display: grid;
+  gap: 14px;
+}
+
+.debug-event {
+  display: grid;
+  gap: 12px;
+}
+
+.debug-event-header,
+.decision-grid {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.debug-event-header span,
+.decision-grid span {
+  color: #746f66;
+  font-size: 0.88rem;
+}
+
+details {
+  border-top: 1px solid #eee5d6;
+  padding-top: 10px;
+}
+
+summary {
+  cursor: pointer;
+  font-weight: 800;
+}
+
 @media (max-width: 820px) {
+  body {
+    min-height: 100dvh;
+    overflow: hidden;
+  }
+
   .app-shell {
+    display: flex;
+    flex-direction: column;
     grid-template-columns: 1fr;
+    height: 100dvh;
+    min-height: 0;
   }
 
   .sidebar {
-    min-height: auto;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: grid;
+    gap: 10px;
+    padding: 10px 12px;
+    background: #24352b;
+    box-shadow: 0 6px 18px rgb(24 32 25 / 18%);
+  }
+
+  .brand {
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  .brand h1 {
+    font-size: 1rem;
+  }
+
+  .brand p {
+    font-size: 0.82rem;
+  }
+
+  .tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+    overflow-x: auto;
+  }
+
+  .tabs button {
+    justify-content: center;
+    min-height: 38px;
+    padding: 0 8px;
+    font-size: 0.82rem;
+  }
+
+  .tabs button svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .control-panel {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    align-items: center;
+  }
+
+  .toggle {
+    display: grid;
+    gap: 5px;
+    justify-items: center;
+    min-width: 0;
+    font-size: 0.74rem;
+  }
+
+  .switch {
+    width: 42px;
+    height: 24px;
+    padding: 3px;
+  }
+
+  .switch span {
+    width: 18px;
+    height: 18px;
+  }
+
+  .switch.on span {
+    transform: translateX(18px);
+  }
+
+  .button-row {
+    grid-column: 1 / -1;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .icon-button {
+    width: 54px;
+    height: 42px;
+  }
+
+  .status {
+    grid-column: 1 / -1;
+    min-height: 20px;
+    text-align: center;
+    font-size: 0.82rem;
+  }
+
+  .workspace {
+    flex: 1;
+    min-height: 0;
+    padding: 12px;
+    overflow: hidden;
+  }
+
+  .chat-header {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 10px;
+    padding-bottom: 10px;
+  }
+
+  .chat-header h2,
+  .info-section h2 {
+    font-size: 1.1rem;
+  }
+
+  .chat-header p {
+    font-size: 0.86rem;
   }
 
   .composer,
@@ -443,12 +601,92 @@ th {
     grid-template-columns: 1fr;
   }
 
-  .chat-header {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
   .listen-indicator {
     width: 100%;
+    min-height: 38px;
+  }
+
+  .messages {
+    min-height: 0;
+    padding: 12px 0 112px;
+    gap: 10px;
+  }
+
+  .empty-state {
+    min-height: 35vh;
+    padding: 20px 8px;
+  }
+
+  .message {
+    padding: 12px;
+    font-size: 0.94rem;
+  }
+
+  .message-meta {
+    align-items: flex-start;
+  }
+
+  .meta-icons {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+
+  .composer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    gap: 8px;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    border-top: 1px solid #ded8cc;
+    background: #f4f1ea;
+    box-shadow: 0 -8px 20px rgb(24 32 25 / 12%);
+  }
+
+  .composer input {
+    min-height: 44px;
+  }
+
+  .composer button {
+    min-height: 42px;
+  }
+
+  .info-grid,
+  .settings-grid,
+  .debug-view {
+    height: 100%;
+    overflow: auto;
+    padding-bottom: 12px;
+  }
+
+  .info-section {
+    padding: 14px;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+
+  pre {
+    font-size: 0.76rem;
+  }
+}
+
+@media (max-width: 430px) {
+  .tabs button {
+    gap: 4px;
+    padding: 0 5px;
+    font-size: 0.75rem;
+  }
+
+  .composer {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .composer input {
+    grid-column: 1 / -1;
   }
 }

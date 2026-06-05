@@ -4,9 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
+    "dev": "tsx src/localServer.ts",
+    "dev:worker": "wrangler dev --local --ip 127.0.0.1 --port 5173",
+    "dev:vite": "vite --host 127.0.0.1",
     "build": "tsc && vite build",
-    "preview": "vite preview --host 127.0.0.1"
+    "preview": "vite preview --host 127.0.0.1",
+    "deploy": "npm run build && wrangler deploy",
+    "deploy:cloudflare": "npm run db:migrate:remote && wrangler deploy",
+    "secrets:push": "node scripts/push-worker-secrets.cjs",
+    "db:migrate": "wrangler d1 migrations apply rtx_ai_voice_trainer_costs",
+    "db:migrate:remote": "wrangler d1 migrations apply rtx_ai_voice_trainer_costs --remote",
+    "db:migrate:local": "wrangler d1 migrations apply rtx_ai_voice_trainer_costs --local"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.1.1",
@@ -17,6 +25,9 @@
     "react-dom": "^19.2.1"
   },
   "devDependencies": {
+    "@types/node": "^24.10.2",
+    "tsx": "^4.21.0",
+    "wrangler": "^4.54.0",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3"
   }

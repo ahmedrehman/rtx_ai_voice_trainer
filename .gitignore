@@ -8,3 +8,7 @@ app/dist/
 app/.env
 app/.env.*
 !app/.env.example
+app/.wrangler/
+app/local-data/
+app/wrangler-login.*.log
+local-server.log

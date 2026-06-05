@@ -1,5 +1,5 @@
-const cacheName = "voice-trainer-v1";
-const appShell = ["/", "/manifest.webmanifest", "/icon.svg"];
+const cacheName = "voice-trainer-v2";
+const appShell = ["./", "manifest.webmanifest", "icon.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(appShell)));
@@ -25,6 +25,6 @@ self.addEventListener("fetch", (event) => {
         caches.open(cacheName).then((cache) => cache.put(event.request, copy));
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("/")))
+      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./")))
   );
 });
