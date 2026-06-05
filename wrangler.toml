@@ -1,0 +1,21 @@
+name = "rtx-ai-voice-trainer"
+main = "app/src/worker.ts"
+compatibility_date = "2026-06-05"
+
+[build]
+command = "npm install && npm run build"
+cwd = "app"
+watch_dir = "app/src"
+
+[assets]
+directory = "app/dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+
+[vars]
+APP_BASE_PATH = "/apps/aitutor/"
+
+[[d1_databases]]
+binding = "COST_DB"
+database_name = "rtx_ai_voice_trainer_costs"
+database_id = "de24a59c-78d5-4bbf-be48-b3a94d2cf722"
