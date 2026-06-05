@@ -12,3 +12,8 @@ app/.wrangler/
 app/local-data/
 app/wrangler-login.*.log
 local-server.log
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
