@@ -1,0 +1,3 @@
+name = "rtx-ai-voice-trainer"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-06-05"
