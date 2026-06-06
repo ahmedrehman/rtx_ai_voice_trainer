@@ -49,7 +49,12 @@ export async function correctUtterance(input: CorrectionInput, env: TrainerEnv):
   const settings = { ...defaultSettings, ...input.settings };
   const providerId = normalizeProvider(input.providerId);
   const request: CorrectionInput = { ...input, providerId, settings };
-  const correction = await providerModules[providerId].correct(request, env);
+  const correctionWithDebug = await providerModules[providerId].correct(request, env) as StructuredCorrection & { __providerDebug?: unknown };
+  const providerDebug = correctionWithDebug.__providerDebug;
+  if ("__providerDebug" in correctionWithDebug) {
+    delete correctionWithDebug.__providerDebug;
+  }
+  const correction = correctionWithDebug;
   const trainerText = correction.notes.length
     ? `${correction.corrected}\n${correction.notes.join(" ")}`
     : correction.corrected;
@@ -75,7 +80,8 @@ export async function correctUtterance(input: CorrectionInput, env: TrainerEnv):
         shouldSpeak: request.voiceOutput && (correction.shouldRespond || correction.visualFeedback !== "none"),
         trigger: correction.trigger
       }
-    }
+    },
+    providerDebug
   };
 }
 

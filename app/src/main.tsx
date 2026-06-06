@@ -714,7 +714,8 @@ function App() {
       systemPrompt: result.debug.systemPrompt,
       request,
       decision: result.debug.decision,
-      response: correction
+      response: correction,
+      providerDebug: result.providerDebug
     };
 
     const shouldSpeakCorrection = speakEnabledRef.current && correction.visualFeedback !== "none" && Boolean(result.spokenText || result.trainerText);
@@ -1648,6 +1649,10 @@ function DebugTab({
               <details open>
                 <summary>System prompt</summary>
                 <pre>{event.systemPrompt}</pre>
+              </details>
+              <details open>
+                <summary>Provider input/output</summary>
+                <pre>{JSON.stringify(event.providerDebug || null, null, 2)}</pre>
               </details>
             </section>
           ))

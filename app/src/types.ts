@@ -80,6 +80,7 @@ export type CorrectionResult = {
       trigger: Trigger;
     };
   };
+  providerDebug?: unknown;
 };
 
 export type ProviderSummary = {
@@ -104,6 +105,7 @@ export type DebugEvent = {
     trigger: Trigger;
   };
   response: StructuredCorrection;
+  providerDebug?: unknown;
 };
 
 export type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;

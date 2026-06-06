@@ -5,6 +5,7 @@ export type AiCallConfig = {
 export type AiCorrectionRequest = {
   model?: string;
   systemPrompt: string;
+  taskPrompt: string;
   userPayload: unknown;
 };
 
@@ -31,30 +32,52 @@ export type AiAudioTurnResult = {
 
 export async function callOpenAiCorrectionJson(config: AiCallConfig, request: AiCorrectionRequest) {
   const apiKey = requireOpenAiKey(config);
+  const requestBody = {
+    model: request.model || "gpt-4.1-mini",
+    input: [
+      { role: "system", content: request.systemPrompt },
+      {
+        role: "user",
+        content: [
+          "TASK:",
+          request.taskPrompt,
+          "",
+          "DATA JSON:",
+          JSON.stringify(request.userPayload)
+        ].join("\n")
+      }
+    ],
+    text: { format: { type: "json_object" } }
+  };
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      model: request.model || "gpt-4.1-mini",
-      input: [
-        { role: "system", content: request.systemPrompt },
-        { role: "user", content: JSON.stringify(request.userPayload) }
-      ],
-      text: { format: { type: "json_object" } }
-    })
+    body: JSON.stringify(requestBody)
   });
 
   if (!response.ok) {
-    throw new Error(await responseError(response, "OpenAI correction failed"));
+    const errorText = await response.text().catch(() => "");
+    throw new Error(JSON.stringify({
+      message: `OpenAI correction failed with ${response.status}`,
+      requestBody,
+      responseStatus: response.status,
+      responseText: errorText
+    }));
   }
 
   const data = await response.json();
   return {
     rawText: extractResponsesText(data),
-    rawResponse: data
+    rawResponse: data,
+    providerDebug: {
+      endpoint: "POST /v1/responses",
+      requestBody,
+      responseStatus: response.status,
+      responseJson: data
+    }
   };
 }
 
@@ -203,4 +226,3 @@ async function responseError(response: Response, fallback: string) {
   const detail = await response.text().catch(() => "");
   return `${fallback} with ${response.status}${detail ? `: ${detail}` : ""}`;
 }
-

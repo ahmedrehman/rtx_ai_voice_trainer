@@ -102,6 +102,13 @@ async function correctWithOpenAI(input: CorrectionInput, env: TrainerEnv): Promi
       {
         model: "gpt-4.1-mini",
         systemPrompt: buildSystemPrompt(input.settings),
+        taskPrompt: [
+          "Correct the learner text.",
+          "Return JSON only.",
+          "Do not decide app state.",
+          "Do not add extra fields.",
+          "Keep notes short."
+        ].join("\n"),
         userPayload: input
       }
     );
@@ -109,10 +116,22 @@ async function correctWithOpenAI(input: CorrectionInput, env: TrainerEnv): Promi
     if (!raw.trim()) {
       return providerError(input, `OpenAI correction returned no text. Raw response keys: ${Object.keys(result.rawResponse as Record<string, unknown>).join(", ")}`);
     }
-    return parseCorrection(raw, input);
+    return {
+      ...parseCorrection(raw, input),
+      __providerDebug: result.providerDebug
+    } as StructuredCorrection & { __providerDebug: unknown };
   } catch (error) {
     const message = error instanceof Error ? error.message : "OpenAI correction failed";
-    return providerError(input, message);
+    let providerDebug: unknown;
+    try {
+      providerDebug = JSON.parse(message);
+    } catch {
+      providerDebug = { error: message };
+    }
+    return {
+      ...providerError(input, message),
+      __providerDebug: providerDebug
+    } as StructuredCorrection & { __providerDebug: unknown };
   }
 }
 

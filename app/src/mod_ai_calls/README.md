@@ -14,7 +14,12 @@
 
 - `callOpenAiCorrectionJson(config, request)`
   - input: transcript text
+  - input: `systemPrompt`
+  - input: `taskPrompt`
+  - input: `userPayload`
   - output: `{ rawText, rawResponse }`
+  - output: `providerDebug.requestBody`
+  - output: `providerDebug.responseJson`
   - note: text -> correction JSON
 
 - `callOpenAiSpeech(config, request)`
@@ -46,6 +51,7 @@ type AiCallConfig = {
 type AiCorrectionRequest = {
   model?: string;
   systemPrompt: string;
+  taskPrompt: string;
   userPayload: unknown;
 };
 ```
@@ -67,4 +73,3 @@ type AiAudioTurnRequest = {
   prompt: string;
 };
 ```
-
