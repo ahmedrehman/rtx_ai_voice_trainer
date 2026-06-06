@@ -203,6 +203,7 @@ function App() {
 
   function browserCapabilitySummary() {
     return [
+      "ListenDefault=AI transcription",
       `SpeechRecognition=${speechSupported ? "yes" : "no"}`,
       `BrowserDummySpeech=${browserSpeechSupported ? "yes" : "no"}`,
       `getUserMedia=${microphoneSupported ? "yes" : "no"}`,
@@ -827,14 +828,17 @@ function App() {
       return;
     }
 
-    logActivity("Listen enabled", speechSupported ? "Using live speech capture" : "Using microphone audio fallback");
-    if (!speechSupported) {
-      void startAudioRecording();
+    logActivity("Listen enabled", "Using AI transcription audio chunks");
+    void startAudioRecording();
+  }
+
+  function startBrowserSpeechRecognition() {
+    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!Recognition) {
+      setStatus("Browser speech recognition is not supported");
+      logActivity("Browser listen unsupported", "SpeechRecognition API is not available");
       return;
     }
-
-    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Recognition) return;
 
     recognitionRef.current?.abort();
     const recognition = new Recognition();
@@ -903,6 +907,7 @@ function App() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       audioChunksRef.current = [];
       const recorder = new MediaRecorder(stream);
+      const voiceMeter = startVoiceMeter(stream);
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -912,24 +917,37 @@ function App() {
 
       recorder.onstop = () => {
         stream.getTracks().forEach((track) => track.stop());
+        const speechLikeAudio = voiceMeter.stop();
+        mediaRecorderRef.current = null;
         setListening(false);
-        setListenEnabled(false);
         const forced = correctNextRef.current;
         correctNextRef.current = false;
         const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
         audioChunksRef.current = [];
+        if (!speechLikeAudio) {
+          setStatus("No speech detected");
+          logActivity("No speech detected", "Skipped AI transcription for quiet audio chunk");
+          restartListeningChunk();
+          return;
+        }
         if (blob.size > 0) {
-          void transcribeAndSubmit(blob, forced);
+          void transcribeAndMaybeContinue(blob, forced);
         } else {
           setStatus("No speech heard");
+          restartListeningChunk();
         }
       };
 
       mediaRecorderRef.current = recorder;
       recorder.start();
       setListening(true);
-      setStatus("Recording");
-      logActivity("Recording started", "Microphone permission granted");
+      setStatus("Recording for AI transcription");
+      logActivity("AI listen recording", "Recording 4 second audio chunk");
+      window.setTimeout(() => {
+        if (mediaRecorderRef.current === recorder && recorder.state === "recording") {
+          recorder.stop();
+        }
+      }, 4000);
     } catch (error) {
       setListenEnabled(false);
       setListening(false);
@@ -937,6 +955,52 @@ function App() {
       setStatus(message);
       logActivity("Microphone error", message);
     }
+  }
+
+  function startVoiceMeter(stream: MediaStream) {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) {
+      return { stop: () => true };
+    }
+
+    const context = new AudioContextClass();
+    const source = context.createMediaStreamSource(stream);
+    const processor = context.createScriptProcessor(2048, 1, 1);
+    let speechLikeAudio = false;
+
+    processor.onaudioprocess = (event) => {
+      const samples = event.inputBuffer.getChannelData(0);
+      let total = 0;
+      for (const sample of samples) total += sample * sample;
+      const rms = Math.sqrt(total / samples.length);
+      if (rms > 0.018) speechLikeAudio = true;
+    };
+
+    source.connect(processor);
+    processor.connect(context.destination);
+
+    return {
+      stop: () => {
+        processor.disconnect();
+        source.disconnect();
+        void context.close();
+        return speechLikeAudio;
+      }
+    };
+  }
+
+  async function transcribeAndMaybeContinue(blob: Blob, forced: boolean) {
+    await transcribeAndSubmit(blob, forced);
+    restartListeningChunk();
+  }
+
+  function restartListeningChunk() {
+    if (!listenEnabledRef.current || speaking || listeningPausedForPlaybackRef.current || Date.now() < suppressListeningUntilRef.current) return;
+    window.setTimeout(() => {
+      if (listenEnabledRef.current && !mediaRecorderRef.current && !audioContextRef.current && !recognitionRef.current) {
+        startListening();
+      }
+    }, 500);
   }
 
   async function startWavRecording() {
@@ -968,8 +1032,13 @@ function App() {
       audioStreamRef.current = stream;
       audioProcessorRef.current = processor;
       setListening(true);
-      setStatus("Recording");
-      logActivity("Recording started", "Microphone permission granted");
+      setStatus("Recording for AI transcription");
+      logActivity("AI listen recording", "Recording 4 second WAV chunk");
+      window.setTimeout(() => {
+        if (audioContextRef.current === context) {
+          stopWavRecording();
+        }
+      }, 4000);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Microphone permission failed";
       setListenEnabled(false);
@@ -997,17 +1066,17 @@ function App() {
     wavForcedRef.current = false;
     correctNextRef.current = false;
     setListening(false);
-    setListenEnabled(false);
 
     if (!chunks.length) {
       setStatus("No speech heard");
       logActivity("No speech heard", "No audio was recorded");
+      restartListeningChunk();
       return;
     }
 
     const sampleRate = context?.sampleRate || 44100;
     const wav = encodeWav(chunks, sampleRate);
-    void transcribeAndSubmit(wav, forced);
+    void transcribeAndMaybeContinue(wav, forced);
   }
 
   function stopListening() {
