@@ -112,10 +112,34 @@ export async function SYSTEM_MICRO_TO_AUDIO(config: ClientVoiceConfig, input: Sy
     log(config, "error", "SYSTEM_MICRO_TO_AUDIO", error.message);
     return { status: errorStatus("SYSTEM_MICRO_TO_AUDIO", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0 };
   }
+  if (typeof MediaRecorder === "undefined") {
+    const error = new Error("client MediaRecorder API not available");
+    log(config, "error", "SYSTEM_MICRO_TO_AUDIO", error.message);
+    return { status: errorStatus("SYSTEM_MICRO_TO_AUDIO", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0 };
+  }
+  if (input.mimeType && typeof MediaRecorder.isTypeSupported === "function" && !MediaRecorder.isTypeSupported(input.mimeType)) {
+    const error = new Error(`client MediaRecorder MIME type not supported: ${input.mimeType}`);
+    log(config, "error", "SYSTEM_MICRO_TO_AUDIO", error.message);
+    return { status: errorStatus("SYSTEM_MICRO_TO_AUDIO", startedAt, error), audio: null, mimeType: input.mimeType, durationMs: 0 };
+  }
 
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (error) {
+    log(config, "error", "SYSTEM_MICRO_TO_AUDIO", error instanceof Error ? error.message : "microphone permission failed");
+    return { status: errorStatus("SYSTEM_MICRO_TO_AUDIO", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0 };
+  }
+
   const chunks: Blob[] = [];
-  const recorder = new MediaRecorder(stream, input.mimeType ? { mimeType: input.mimeType } : undefined);
+  let recorder: MediaRecorder;
+  try {
+    recorder = new MediaRecorder(stream, input.mimeType ? { mimeType: input.mimeType } : undefined);
+  } catch (error) {
+    stream.getTracks().forEach((track) => track.stop());
+    log(config, "error", "SYSTEM_MICRO_TO_AUDIO", error instanceof Error ? error.message : "MediaRecorder creation failed");
+    return { status: errorStatus("SYSTEM_MICRO_TO_AUDIO", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0 };
+  }
 
   return new Promise((resolve) => {
     recorder.ondataavailable = (event) => {
@@ -136,7 +160,14 @@ export async function SYSTEM_MICRO_TO_AUDIO(config: ClientVoiceConfig, input: Sy
       resolve(output);
     };
 
-    recorder.start();
+    try {
+      recorder.start();
+    } catch (error) {
+      stream.getTracks().forEach((track) => track.stop());
+      log(config, "error", "SYSTEM_MICRO_TO_AUDIO", error instanceof Error ? error.message : "recording start failed");
+      resolve({ status: errorStatus("SYSTEM_MICRO_TO_AUDIO", startedAt, error), audio: null, mimeType: recorder.mimeType || input.mimeType || "", durationMs: 0 });
+      return;
+    }
     window.setTimeout(() => recorder.state === "recording" && recorder.stop(), input.durationMs);
   });
 }
@@ -149,11 +180,35 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
     return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker" };
   }
+  if (typeof MediaRecorder === "undefined") {
+    const error = new Error("client MediaRecorder API not available");
+    log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker" };
+  }
+  if (input.mimeType && typeof MediaRecorder.isTypeSupported === "function" && !MediaRecorder.isTypeSupported(input.mimeType)) {
+    const error = new Error(`client MediaRecorder MIME type not supported: ${input.mimeType}`);
+    log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType, durationMs: 0, chunkReason: "no_speech_checker" };
+  }
 
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  } catch (error) {
+    log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error instanceof Error ? error.message : "microphone permission failed");
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker" };
+  }
+
   const chunks: Blob[] = [];
   const startedMs = Date.now();
-  const recorder = new MediaRecorder(stream, input.mimeType ? { mimeType: input.mimeType } : undefined);
+  let recorder: MediaRecorder;
+  try {
+    recorder = new MediaRecorder(stream, input.mimeType ? { mimeType: input.mimeType } : undefined);
+  } catch (error) {
+    stream.getTracks().forEach((track) => track.stop());
+    log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error instanceof Error ? error.message : "MediaRecorder creation failed");
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker" };
+  }
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   let recognition: BrowserSpeechRecognition | null = null;
   let browserSpeechText = "";
@@ -203,27 +258,38 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
       resolve(output);
     };
 
-    recorder.start(250);
+    try {
+      recorder.start(250);
+    } catch (error) {
+      stream.getTracks().forEach((track) => track.stop());
+      log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error instanceof Error ? error.message : "recording start failed");
+      resolve({ status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: recorder.mimeType || input.mimeType || "", durationMs: Date.now() - startedMs, chunkReason: stopReason, browserSpeechText });
+      return;
+    }
     maxTimer = window.setTimeout(() => stop(Recognition ? "max_duration" : "no_speech_checker"), input.maxDurationMs);
 
     if (Recognition) {
-      const recognitionInstance = new Recognition();
-      recognition = recognitionInstance;
-      recognitionInstance.lang = input.speechCheckLang || "fr-FR";
-      recognitionInstance.continuous = false;
-      recognitionInstance.interimResults = true;
-      recognitionInstance.onresult = (event: BrowserSpeechRecognitionEvent) => {
-        for (let index = event.resultIndex; index < event.results.length; index += 1) {
-          browserSpeechText += event.results[index][0].transcript;
-          if (event.results[index].isFinal) stop("browser_speech_final");
-        }
-        if (silenceTimer) window.clearTimeout(silenceTimer);
-        silenceTimer = window.setTimeout(() => stop("silence_after_sound"), input.silenceMs || 900);
-      };
-      recognitionInstance.onerror = (event: { error: string }) => {
-        log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", `browser speech checker failed: ${event.error}`);
-      };
-      recognitionInstance.start();
+      try {
+        const recognitionInstance = new Recognition();
+        recognition = recognitionInstance;
+        recognitionInstance.lang = input.speechCheckLang || "fr-FR";
+        recognitionInstance.continuous = false;
+        recognitionInstance.interimResults = true;
+        recognitionInstance.onresult = (event: BrowserSpeechRecognitionEvent) => {
+          for (let index = event.resultIndex; index < event.results.length; index += 1) {
+            browserSpeechText += event.results[index][0].transcript;
+            if (event.results[index].isFinal) stop("browser_speech_final");
+          }
+          if (silenceTimer) window.clearTimeout(silenceTimer);
+          silenceTimer = window.setTimeout(() => stop("silence_after_sound"), input.silenceMs || 900);
+        };
+        recognitionInstance.onerror = (event: { error: string }) => {
+          log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", `browser speech checker failed: ${event.error}`);
+        };
+        recognitionInstance.start();
+      } catch (error) {
+        log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error instanceof Error ? error.message : "browser speech checker start failed");
+      }
     }
   });
 }
