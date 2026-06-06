@@ -50,12 +50,15 @@ function App() {
   const [installed, setInstalled] = useState(false);
   const [ledger, setLedger] = useState<CostLedger>(() => loadLedger());
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const listenEnabledRef = useRef(false);
   const correctNextRef = useRef(false);
 
   const provider = providerSummaries.find((item) => item.id === providerId) ?? providerSummaries[0];
   const speechSupported = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
-  const recentContext = useMemo(() => messages.slice(-8), [messages]);
+  const recordingSupported = typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia) && typeof MediaRecorder !== "undefined";
+  const recentContext = useMemo(() => messages.slice(-5), [messages]);
 
   useEffect(() => {
     saveLedger(ledger);
@@ -151,6 +154,40 @@ function App() {
     clearLedger();
   }
 
+  async function transcribeAudio(blob: Blob) {
+    const formData = new FormData();
+    const extension = blob.type.includes("mp4") ? "mp4" : "webm";
+    formData.append("file", blob, `speech.${extension}`);
+    formData.append("model", "gpt-4o-mini-transcribe");
+
+    const response = await fetch(apiUrl("/api/transcribe"), {
+      method: "POST",
+      body: formData
+    });
+
+    if (!response.ok) {
+      throw new Error("Audio transcription failed");
+    }
+
+    const data = await response.json() as { text?: string; error?: string };
+    if (data.error) throw new Error(data.error);
+    return (data.text || "").trim();
+  }
+
+  async function transcribeAndSubmit(blob: Blob, forced: boolean) {
+    try {
+      setStatus("Transcribing");
+      const transcript = await transcribeAudio(blob);
+      if (!transcript) {
+        setStatus("No speech heard");
+        return;
+      }
+      await submitUtterance(transcript, { forced, speechInput: true });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Audio transcription failed");
+    }
+  }
+
   async function submitUtterance(rawText: string, options: { forced?: boolean; manualText?: boolean; speechInput?: boolean } = {}) {
     const trimmed = rawText.trim();
     if (!trimmed) return;
@@ -237,6 +274,12 @@ function App() {
     }
 
     correctNextRef.current = true;
+    if (mediaRecorderRef.current?.state === "recording") {
+      setStatus("Correcting recorded speech");
+      mediaRecorderRef.current.stop();
+      return;
+    }
+
     setStatus("Correct now armed: speak");
     if (!listenEnabledRef.current) {
       setListenEnabled(true);
@@ -245,7 +288,7 @@ function App() {
 
   function startListening() {
     if (!speechSupported) {
-      setStatus("Speech recognition is not available in this browser");
+      void startAudioRecording();
       return;
     }
 
@@ -286,7 +329,54 @@ function App() {
     setStatus("Listening");
   }
 
+  async function startAudioRecording() {
+    if (!recordingSupported) {
+      setStatus("Microphone recording is not available in this browser");
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        setListening(false);
+        setListenEnabled(false);
+        const forced = correctNextRef.current;
+        correctNextRef.current = false;
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        audioChunksRef.current = [];
+        if (blob.size > 0) {
+          void transcribeAndSubmit(blob, forced);
+        } else {
+          setStatus("No speech heard");
+        }
+      };
+
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setListening(true);
+      setStatus("Recording");
+    } catch (error) {
+      setListenEnabled(false);
+      setListening(false);
+      setStatus(error instanceof Error ? error.message : "Microphone permission failed");
+    }
+  }
+
   function stopListening() {
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+      return;
+    }
     recognitionRef.current?.stop();
     setListening(false);
     setStatus("Listening stopped");

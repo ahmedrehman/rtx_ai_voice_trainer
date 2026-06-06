@@ -24,6 +24,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       return json(await runCorrection(await request.json(), env));
     }
 
+    if (pathname === "/api/transcribe") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return json(await transcribeAudio(request, env));
+    }
+
     if (pathname.startsWith("/api/")) {
       return notFound();
     }
@@ -33,6 +38,32 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     const message = error instanceof Error ? error.message : "Unexpected server error";
     return json({ error: message }, 500);
   }
+}
+
+async function transcribeAudio(request: Request, env: Env) {
+  if (!env.OPENAI_API_KEY) {
+    return { error: "OPENAI_API_KEY is not configured on the Worker." };
+  }
+
+  const formData = await request.formData();
+  if (!formData.has("model")) {
+    formData.set("model", "gpt-4o-mini-transcribe");
+  }
+
+  const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${env.OPENAI_API_KEY}`
+    },
+    body: formData
+  });
+
+  if (!response.ok) {
+    throw new Error(`OpenAI transcription failed with ${response.status}`);
+  }
+
+  const data = await response.json() as { text?: string };
+  return { text: data.text || "" };
 }
 
 function normalizeBasePath(basePath = "/apps/aitutor/") {
