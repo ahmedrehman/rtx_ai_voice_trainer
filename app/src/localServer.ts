@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { createServer as createViteServer } from "vite";
+import { callOpenAiAudioTurn, callOpenAiSpeech, callOpenAiTranscription } from "./mod_ai_calls";
 import type { Env } from "./server/bindings";
 import { clearCostLedger, getCostLedger, listProviders, runCorrection } from "./server/app";
 import { openLocalCostDb } from "./server/localDb";
@@ -136,21 +137,11 @@ async function transcribeAudio(request: IncomingMessage) {
 
   const body = await readBuffer(request);
   const contentType = request.headers["content-type"];
-  const upstream = await fetch("https://api.openai.com/v1/audio/transcriptions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      ...(contentType ? { "Content-Type": contentType } : {})
-    },
-    body
-  });
-
-  if (!upstream.ok) {
-    return { error: `OpenAI transcription failed with ${upstream.status}` };
+  try {
+    return await callOpenAiTranscription({ openAiApiKey: apiKey }, body, contentType);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "OpenAI transcription failed" };
   }
-
-  const data = await upstream.json() as { text?: string };
-  return { text: data.text || "" };
 }
 
 async function speakAudio(request: IncomingMessage, response: ServerResponse) {
@@ -172,42 +163,25 @@ async function speakAudio(request: IncomingMessage, response: ServerResponse) {
     return;
   }
 
-  const attempts = [
-    { model: "gpt-4o-mini-tts", withInstructions: true },
-    { model: "tts-1", withInstructions: false }
-  ];
-  let upstream: Response | null = null;
-  let lastError = "";
-
-  for (const attempt of attempts) {
-    upstream = await fetch("https://api.openai.com/v1/audio/speech", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: attempt.model,
-        voice: body.voice || "coral",
-        input: text,
-        ...(attempt.withInstructions ? { instructions: body.style || `Speak as a calm ${body.languageName || "language"} teacher. Keep it short.` } : {}),
-        response_format: "mp3"
-      })
-    });
-
-    if (upstream.ok) break;
-    lastError = await upstream.text().catch(() => "");
-    upstream = null;
-  }
-
-  if (!upstream) {
-    sendJson(response, { error: lastError || "OpenAI speech failed" }, 502);
+  let result: { body: ReadableStream<Uint8Array> | null; contentType: string };
+  try {
+    result = await callOpenAiSpeech(
+      { openAiApiKey: apiKey },
+      {
+        text,
+        voice: body.voice,
+        languageName: body.languageName,
+        style: body.style
+      }
+    );
+  } catch (error) {
+    sendJson(response, { error: error instanceof Error ? error.message : "OpenAI speech failed" }, 502);
     return;
   }
 
-  const audio = Buffer.from(await upstream.arrayBuffer());
+  const audio = Buffer.from(await new Response(result.body).arrayBuffer());
   response.statusCode = 200;
-  response.setHeader("Content-Type", upstream.headers.get("content-type") || "audio/mpeg");
+  response.setHeader("Content-Type", result.contentType);
   response.setHeader("Cache-Control", "no-store");
   response.end(audio);
 }
@@ -238,55 +212,19 @@ async function audioTurn(request: IncomingMessage) {
     "Return a short text message that is valid JSON with fields: text_original, text_corrected, message, hint, signal.",
     "Also produce a short spoken correction in audio. Keep it minimal."
   ].join("\n");
-  const attempts = ["gpt-audio", "gpt-audio-1.5"];
-  let lastError = "";
-
-  for (const model of attempts) {
-    const upstream = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model,
-        modalities: ["text", "audio"],
-        audio: { voice: body.voice || "coral", format: "wav" },
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              { type: "input_audio", input_audio: { data: audioBase64, format: body.audioFormat || "wav" } }
-            ]
-          }
-        ]
-      })
-    });
-
-    if (!upstream.ok) {
-      lastError = await upstream.text().catch(() => "");
-      continue;
-    }
-
-    const data = await upstream.json() as {
-      choices?: Array<{
-        message?: {
-          content?: string | null;
-          audio?: { data?: string; transcript?: string };
-        };
-      }>;
-    };
-    const message = data.choices?.[0]?.message;
-    return {
-      model,
-      text: message?.content || message?.audio?.transcript || "",
-      audioBase64: message?.audio?.data || "",
-      audioFormat: "wav"
-    };
+  try {
+    return await callOpenAiAudioTurn(
+      { openAiApiKey: apiKey },
+      {
+        audioBase64,
+        audioFormat: body.audioFormat,
+        voice: body.voice,
+        prompt
+      }
+    );
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Audio AI failed" };
   }
-
-  return { error: lastError || "Audio AI failed" };
 }
 
 function sendJson(response: ServerResponse, value: unknown, status = 200) {

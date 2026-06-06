@@ -1,4 +1,5 @@
 import type { CorrectionInput, ProviderId, ProviderSummary, StructuredCorrection } from "../types";
+import { callOpenAiCorrectionJson } from "../mod_ai_calls";
 import { buildSystemPrompt, demoCorrect, parseCorrection } from "./trainerLogic";
 
 export type TrainerEnv = {
@@ -95,59 +96,24 @@ async function correctWithOpenAI(input: CorrectionInput, env: TrainerEnv): Promi
     return notConfigured(input, "OpenAI");
   }
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${env.OPENAI_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "gpt-4.1-mini",
-      input: [
-        { role: "system", content: buildSystemPrompt(input.settings) },
-        { role: "user", content: JSON.stringify(input) }
-      ],
-      text: { format: { type: "json_object" } }
-    })
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    return providerError(input, `OpenAI correction failed with ${response.status}${detail ? `: ${detail}` : ""}`);
-  }
-
-  const data = await response.json();
-  const raw = extractResponsesText(data);
-  if (!raw.trim()) {
-    return providerError(input, `OpenAI correction returned no text. Raw response keys: ${Object.keys(data as Record<string, unknown>).join(", ")}`);
-  }
-
   try {
+    const result = await callOpenAiCorrectionJson(
+      { openAiApiKey: env.OPENAI_API_KEY },
+      {
+        model: "gpt-4.1-mini",
+        systemPrompt: buildSystemPrompt(input.settings),
+        userPayload: input
+      }
+    );
+    const raw = result.rawText;
+    if (!raw.trim()) {
+      return providerError(input, `OpenAI correction returned no text. Raw response keys: ${Object.keys(result.rawResponse as Record<string, unknown>).join(", ")}`);
+    }
     return parseCorrection(raw, input);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not parse OpenAI correction JSON";
-    return providerError(input, `OpenAI correction JSON parse failed: ${message}. Raw: ${raw.slice(0, 500)}`);
+    const message = error instanceof Error ? error.message : "OpenAI correction failed";
+    return providerError(input, message);
   }
-}
-
-function extractResponsesText(data: unknown) {
-  const response = data as {
-    output_text?: string;
-    output?: Array<{
-      content?: Array<{
-        text?: string;
-        type?: string;
-      }>;
-    }>;
-  };
-
-  if (typeof response.output_text === "string") return response.output_text;
-
-  return (response.output || [])
-    .flatMap((item) => item.content || [])
-    .map((content) => content.text || "")
-    .filter(Boolean)
-    .join("\n");
 }
 
 function providerError(input: CorrectionInput, message: string): StructuredCorrection {
