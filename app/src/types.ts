@@ -1,6 +1,6 @@
 export type ProviderId = "browser-demo" | "openai" | "deepgram-elevenlabs" | "azure" | "google";
 
-export type Tab = "chat" | "info" | "settings" | "debug";
+export type Tab = "chat" | "settings" | "debug";
 
 export type Trigger = "keyword" | "button" | "manual-text" | "silent";
 
@@ -9,9 +9,6 @@ export type AppSettings = {
   recognitionLang: string;
   topic: string;
   keyword: string;
-  showStructured: boolean;
-  showVisualFeedback: boolean;
-  shortVoiceHints: boolean;
 };
 
 export type StructuredCorrection = {

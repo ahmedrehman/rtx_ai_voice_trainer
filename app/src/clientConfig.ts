@@ -12,10 +12,7 @@ export const defaultSettings: AppSettings = {
   languageName: "French",
   recognitionLang: "fr-FR",
   topic: "daily conversation",
-  keyword: "computer",
-  showStructured: true,
-  showVisualFeedback: true,
-  shortVoiceHints: true
+  keyword: "computer"
 };
 
 export const defaultLedger: Record<ProviderId, CostBucket> = {
@@ -29,42 +26,42 @@ export const defaultLedger: Record<ProviderId, CostBucket> = {
 export const providerSummaries: ProviderSummary[] = [
   {
     id: "browser-demo",
-    name: "Browser demo",
-    role: "Server demo provider",
-    pricingNote: "No external API cost.",
-    quality: "Best for testing the silent workflow before connecting paid services.",
-    productionPath: "Server-side deterministic trainer module."
+    name: "Demo mode",
+    role: "Free test mode",
+    pricingNote: "No paid API calls.",
+    quality: "Checks only a few built-in example mistakes.",
+    productionPath: "Use this only to test the app controls."
   },
   {
     id: "openai",
     name: "OpenAI",
-    role: "STT + LLM + TTS capable",
-    pricingNote: "Uses server-side Worker secrets.",
-    quality: "Recommended first production provider.",
-    productionPath: "Worker calls OpenAI with OPENAI_API_KEY."
+    role: "Real AI corrections",
+    pricingNote: "Uses your OpenAI API key.",
+    quality: "Best default for real correction quality.",
+    productionPath: "Costs money based on OpenAI usage."
   },
   {
     id: "deepgram-elevenlabs",
     name: "Deepgram + ElevenLabs",
-    role: "Fast STT + high quality TTS",
-    pricingNote: "Uses server-side Worker secrets.",
-    quality: "Strong voice quality, more integration work.",
-    productionPath: "Worker calls Deepgram and ElevenLabs."
+    role: "Speech input + high quality voice",
+    pricingNote: "Uses Deepgram and ElevenLabs keys.",
+    quality: "For stronger speech and spoken output.",
+    productionPath: "Costs money on those services."
   },
   {
     id: "azure",
     name: "Azure Speech",
-    role: "Enterprise speech services",
-    pricingNote: "Uses server-side Worker secrets.",
-    quality: "Reliable, but heavier setup for a small prototype.",
-    productionPath: "Worker calls Azure Speech services."
+    role: "Microsoft speech services",
+    pricingNote: "Uses Azure Speech key and region.",
+    quality: "Useful if you already use Azure.",
+    productionPath: "Costs money on Azure."
   },
   {
     id: "google",
     name: "Google Cloud",
-    role: "Speech and TTS services",
-    pricingNote: "Uses server-side Worker secrets.",
-    quality: "Solid speech infrastructure, separate integration path.",
-    productionPath: "Worker calls Google Cloud services."
+    role: "Google speech services",
+    pricingNote: "Uses Google Cloud API key.",
+    quality: "Useful if you already use Google Cloud.",
+    productionPath: "Costs money on Google Cloud."
   }
 ];

@@ -4,17 +4,11 @@ import {
   AlertTriangle,
   Bot,
   Check,
-  CircleDollarSign,
   ClipboardList,
-  Info,
   Mic,
   MicOff,
   MessageSquareText,
-  Play,
   Settings2,
-  Square,
-  Volume2,
-  VolumeX
 } from "lucide-react";
 import { defaultLedger, providerSummaries } from "./clientConfig";
 import { clearLedger, loadLedger, loadSettings, saveLedger, saveSettings } from "./storage";
@@ -26,6 +20,15 @@ declare global {
     SpeechRecognition?: SpeechRecognitionConstructor;
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
   }
+
+  interface BeforeInstallPromptEvent extends Event {
+    prompt: () => Promise<void>;
+    userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+  }
+
+  interface Navigator {
+    standalone?: boolean;
+  }
 }
 
 function apiUrl(path: string) {
@@ -34,20 +37,21 @@ function apiUrl(path: string) {
 
 function App() {
   const [tab, setTab] = useState<Tab>("chat");
-  const [providerId, setProviderId] = useState<ProviderId>("browser-demo");
+  const [providerId, setProviderId] = useState<ProviderId>("openai");
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
   const [draft, setDraft] = useState("");
-  const [voiceTalk, setVoiceTalk] = useState(true);
-  const [alwaysListen, setAlwaysListen] = useState(false);
-  const [answerNow, setAnswerNow] = useState(false);
-  const [optionalVoice, setOptionalVoice] = useState(false);
+  const [listenEnabled, setListenEnabled] = useState(false);
   const [listening, setListening] = useState(false);
   const [status, setStatus] = useState("Ready");
+  const [latestSignal, setLatestSignal] = useState<"none" | "improvement" | "error">("none");
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [installed, setInstalled] = useState(false);
   const [ledger, setLedger] = useState<CostLedger>(() => loadLedger());
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
-  const shouldRestartRef = useRef(false);
+  const listenEnabledRef = useRef(false);
+  const correctNextRef = useRef(false);
 
   const provider = providerSummaries.find((item) => item.id === providerId) ?? providerSummaries[0];
   const speechSupported = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -66,8 +70,13 @@ function App() {
   }, [settings]);
 
   useEffect(() => {
-    shouldRestartRef.current = alwaysListen && voiceTalk;
-  }, [alwaysListen, voiceTalk]);
+    listenEnabledRef.current = listenEnabled;
+    if (listenEnabled) {
+      startListening();
+    } else {
+      stopListening();
+    }
+  }, [listenEnabled]);
 
   useEffect(() => {
     if (import.meta.env.PROD && "serviceWorker" in navigator) {
@@ -77,23 +86,44 @@ function App() {
     }
   }, []);
 
+  useEffect(() => {
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || Boolean(navigator.standalone);
+    setInstalled(standalone);
+
+    const onBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+
+    const onAppInstalled = () => {
+      setInstalled(true);
+      setInstallPrompt(null);
+    };
+
+    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+    window.addEventListener("appinstalled", onAppInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", onAppInstalled);
+    };
+  }, []);
+
   function updateSettings(next: Partial<AppSettings>) {
     setSettings((current) => ({ ...current, ...next }));
   }
 
-  function speak(text: string) {
-    if (!optionalVoice) return;
+  async function installApp() {
+    if (!installPrompt) {
+      setStatus("Use browser menu to install app");
+      return;
+    }
 
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = settings.recognitionLang;
-    utterance.rate = 0.92;
-    window.speechSynthesis.speak(utterance);
-  }
-
-  function stopSpeech() {
-    window.speechSynthesis.cancel();
-    setStatus("Speech stopped");
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice.outcome === "accepted") {
+      setInstalled(true);
+    }
+    setInstallPrompt(null);
   }
 
   function recordCost(bucket: CostBucket) {
@@ -136,10 +166,10 @@ function App() {
     const request: CorrectionInput = {
       providerId,
       text: trimmed,
-      forced: Boolean(options.forced || answerNow),
+      forced: Boolean(options.forced),
       manualText: Boolean(options.manualText),
       speechInput: Boolean(options.speechInput),
-      voiceOutput: optionalVoice,
+      voiceOutput: false,
       history: recentContext,
       settings
     };
@@ -157,6 +187,7 @@ function App() {
 
     const result = await response.json() as CorrectionResult;
     const correction = result.correction;
+    setLatestSignal(correction.visualFeedback);
 
     const nextMessages: ChatMessage[] = [learnerMessage];
     const debugEvent: DebugEvent = {
@@ -175,42 +206,49 @@ function App() {
         speaker: "trainer",
         text: result.trainerText,
         correction,
-        spoken: optionalVoice,
+        spoken: false,
         createdAt: new Date().toISOString()
       });
-      speak(result.spokenText);
       recordCost(result.cost);
       setStatus(correction.trigger === "keyword" ? "Answered by keyword" : "Answered by request");
     } else {
       nextMessages.push({
         id: crypto.randomUUID(),
         speaker: "system",
-        text: "Captured silently. No response because no keyword or Answer Now trigger was active.",
+        text: correction.visualFeedback === "none"
+          ? "Captured. No correction signal."
+          : "Captured. Correction signal available.",
         correction,
         spoken: false,
         createdAt: new Date().toISOString()
       });
-      setStatus("Captured silently");
+      setStatus(correction.visualFeedback === "none" ? "Captured" : "Correction signal");
     }
 
     setMessages((current) => [...current, ...nextMessages].slice(-40));
     setDebugEvents((current) => [debugEvent, ...current].slice(0, 50));
     setDraft("");
-    setAnswerNow(false);
   }
 
-  function startListening(forceAnswer = false) {
-    if (!voiceTalk) {
-      setStatus("Voice talk is off");
+  function correctNow() {
+    if (draft.trim()) {
+      void submitUtterance(draft, { forced: true, manualText: true });
       return;
     }
 
+    correctNextRef.current = true;
+    setStatus("Correct now armed: speak");
+    if (!listenEnabledRef.current) {
+      setListenEnabled(true);
+    }
+  }
+
+  function startListening() {
     if (!speechSupported) {
       setStatus("Speech recognition is not available in this browser");
       return;
     }
 
-    if (forceAnswer) setAnswerNow(true);
     const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Recognition) return;
 
@@ -225,29 +263,30 @@ function App() {
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         transcript += event.results[index][0].transcript;
       }
-      void submitUtterance(transcript, { forced: forceAnswer, speechInput: true });
+      const forced = correctNextRef.current;
+      correctNextRef.current = false;
+      void submitUtterance(transcript, { forced, speechInput: true });
     };
 
     recognition.onerror = (event) => {
-      setStatus(`Voice error: ${event.error}`);
+      setStatus(event.error === "no-speech" ? "No speech heard" : `Voice error: ${event.error}`);
       setListening(false);
     };
 
     recognition.onend = () => {
       setListening(false);
-      if (shouldRestartRef.current) {
-        window.setTimeout(() => startListening(false), 500);
+      if (listenEnabledRef.current) {
+        window.setTimeout(() => startListening(), 500);
       }
     };
 
     recognitionRef.current = recognition;
     recognition.start();
     setListening(true);
-    setStatus(forceAnswer ? "Listening for Answer Now" : "Listening");
+    setStatus("Listening");
   }
 
   function stopListening() {
-    shouldRestartRef.current = false;
     recognitionRef.current?.stop();
     setListening(false);
     setStatus("Listening stopped");
@@ -260,7 +299,7 @@ function App() {
           <div className="brand">
             <Bot aria-hidden="true" />
             <div>
-              <h1>{settings.languageName} Trainer</h1>
+              <h1>AI Trainer</h1>
               <p>{provider.name}</p>
             </div>
           </div>
@@ -270,13 +309,9 @@ function App() {
               <MessageSquareText size={18} />
               Chat
             </button>
-            <button className={tab === "info" ? "active" : ""} onClick={() => setTab("info")}>
-              <Info size={18} />
-              Info
-            </button>
             <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>
               <Settings2 size={18} />
-              Settings
+              Configuration
             </button>
             <button className={tab === "debug" ? "active" : ""} onClick={() => setTab("debug")}>
               <ClipboardList size={18} />
@@ -286,19 +321,12 @@ function App() {
         </div>
 
         <section className="control-panel" aria-label="Voice controls">
-          <Toggle label="Voice talk" enabled={voiceTalk} onChange={setVoiceTalk} />
-          <Toggle label="Always listen" enabled={alwaysListen} onChange={setAlwaysListen} />
-          <Toggle label="Optional voice" enabled={optionalVoice} onChange={setOptionalVoice} />
+          <Toggle label="Listen" enabled={listenEnabled} onChange={setListenEnabled} />
 
           <div className="button-row">
-            <button className="icon-button primary" onClick={() => startListening(true)} title="Answer now">
-              <Play size={18} />
-            </button>
-            <button className="icon-button" onClick={listening ? stopListening : () => startListening(false)} title={listening ? "Stop listening" : "Listen"}>
-              {listening ? <MicOff size={18} /> : <Mic size={18} />}
-            </button>
-            <button className="icon-button" onClick={stopSpeech} title="Stop voice response">
-              <Square size={18} />
+            <button className="text-action primary" onClick={correctNow}>
+              <Check size={18} />
+              Correct now
             </button>
           </div>
           <p className="status">{status}</p>
@@ -308,34 +336,40 @@ function App() {
       <section className="workspace">
         {tab === "chat" && (
           <ChatTab
-            answerNow={answerNow}
             draft={draft}
             keyword={settings.keyword}
+            latestSignal={latestSignal}
             listening={listening}
             messages={messages}
-            setAnswerNow={setAnswerNow}
             setDraft={setDraft}
             settings={settings}
+            correctNow={correctNow}
             submitUtterance={submitUtterance}
           />
         )}
 
-        {tab === "info" && (
-          <InfoTab
+        {tab === "settings" && (
+          <SettingsTab
             providerId={providerId}
             setProviderId={setProviderId}
-            ledger={ledger}
-            recentContext={recentContext}
-            resetCosts={resetCosts}
+            settings={settings}
+            updateSettings={updateSettings}
+            speechSupported={speechSupported}
+            installApp={installApp}
+            installReady={Boolean(installPrompt)}
+            installed={installed}
           />
         )}
 
-        {tab === "settings" && (
-          <SettingsTab settings={settings} updateSettings={updateSettings} speechSupported={speechSupported} />
-        )}
-
         {tab === "debug" && (
-          <DebugTab events={debugEvents} clearEvents={() => setDebugEvents([])} settings={settings} providerId={providerId} />
+          <DebugTab
+            events={debugEvents}
+            clearEvents={() => setDebugEvents([])}
+            ledger={ledger}
+            providerId={providerId}
+            recentContext={recentContext}
+            resetCosts={resetCosts}
+          />
         )}
       </section>
     </main>
@@ -343,24 +377,24 @@ function App() {
 }
 
 function ChatTab({
-  answerNow,
   draft,
   keyword,
+  latestSignal,
   listening,
   messages,
-  setAnswerNow,
   setDraft,
   settings,
+  correctNow,
   submitUtterance
 }: {
-  answerNow: boolean;
   draft: string;
   keyword: string;
+  latestSignal: "none" | "improvement" | "error";
   listening: boolean;
   messages: ChatMessage[];
-  setAnswerNow: (value: boolean | ((value: boolean) => boolean)) => void;
   setDraft: (value: string) => void;
   settings: AppSettings;
+  correctNow: () => void;
   submitUtterance: (text: string, options?: { forced?: boolean; manualText?: boolean; speechInput?: boolean }) => Promise<void>;
 }) {
   return (
@@ -368,7 +402,7 @@ function ChatTab({
       <div className="chat-header">
         <div>
           <h2>Chat</h2>
-          <p>Silent by default. Voice answers only for "{keyword}" or Answer Now.</p>
+          <p>Listen captures speech. Correct now asks the AI for a correction.</p>
         </div>
         <div className={`listen-indicator ${listening ? "on" : ""}`}>
           {listening ? <Mic size={16} /> : <MicOff size={16} />}
@@ -376,11 +410,22 @@ function ChatTab({
         </div>
       </div>
 
+      <div className={`signal-banner ${latestSignal}`}>
+        <span>correctionSignal={latestSignal}</span>
+        <strong>
+          {latestSignal === "none"
+            ? "No correction needed"
+            : latestSignal === "improvement"
+              ? "Improvement available"
+              : "Important correction"}
+        </strong>
+      </div>
+
       <div className="messages" aria-live="polite">
         {messages.length === 0 ? (
           <div className="empty-state">
             <Mic size={34} />
-            <p>Speak or type a {settings.languageName} sentence. The trainer captures first and answers only when invited.</p>
+            <p>Turn on Listen, speak a sentence, then use Correct now when you want the AI to correct it.</p>
           </div>
         ) : (
           messages.map((message) => <MessageBubble key={message.id} message={message} settings={settings} />)
@@ -397,15 +442,11 @@ function ChatTab({
         <input
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
-          placeholder={`Type ${settings.languageName}, or start with "${keyword}"`}
+          placeholder={`Type ${settings.languageName}, or say "${keyword}" while listening`}
         />
-        <button type="button" className={answerNow ? "answer-active" : ""} onClick={() => setAnswerNow((value) => !value)}>
+        <button type="button" onClick={correctNow}>
           <Check size={17} />
-          Answer Now
-        </button>
-        <button type="submit">
-          <MessageSquareText size={17} />
-          Send
+          Correct now
         </button>
       </form>
     </>
@@ -424,64 +465,137 @@ function Toggle({ label, enabled, onChange }: { label: string; enabled: boolean;
 }
 
 function MessageBubble({ message, settings }: { message: ChatMessage; settings: AppSettings }) {
+  const signal = message.correction?.visualFeedback;
+
   return (
     <article className={`message ${message.speaker}`}>
       <div className="message-meta">
         <span>{message.speaker === "learner" ? "You" : message.speaker === "trainer" ? "Trainer" : "System"}</span>
         <span className="meta-icons">
-          {settings.showVisualFeedback && message.correction?.visualFeedback === "improvement" && (
-            <span className="feedback improvement"><AlertTriangle size={14} /> Improvement</span>
+          {signal && (
+            <span className={`feedback ${signal}`}>
+              {signal !== "none" && <AlertTriangle size={14} />}
+              correctionSignal={signal}
+            </span>
           )}
-          {message.spoken ? <Volume2 size={14} /> : <VolumeX size={14} />}
         </span>
       </div>
       <p>{message.text}</p>
-      {settings.showStructured && message.correction && <pre>{JSON.stringify(message.correction, null, 2)}</pre>}
     </article>
   );
 }
 
-function InfoTab({
+function SettingsTab({
   providerId,
   setProviderId,
-  ledger,
-  recentContext,
-  resetCosts
+  settings,
+  updateSettings,
+  speechSupported,
+  installApp,
+  installReady,
+  installed
 }: {
   providerId: ProviderId;
   setProviderId: (providerId: ProviderId) => void;
+  settings: AppSettings;
+  updateSettings: (settings: Partial<AppSettings>) => void;
+  speechSupported: boolean;
+  installApp: () => void;
+  installReady: boolean;
+  installed: boolean;
+}) {
+  return (
+    <div className="settings-grid">
+      <section className="info-section">
+        <h2>Configuration</h2>
+        <label className="field">
+          <span>Provider</span>
+          <select value={providerId} onChange={(event) => setProviderId(event.target.value as ProviderId)}>
+            {providerSummaries.map((provider) => (
+              <option key={provider.id} value={provider.id}>{provider.name}</option>
+            ))}
+          </select>
+        </label>
+        <p className="provider-note">
+          {providerSummaries.find((provider) => provider.id === providerId)?.quality}
+        </p>
+        <label className="field">
+          <span>Language or subject</span>
+          <input value={settings.languageName} onChange={(event) => updateSettings({ languageName: event.target.value })} />
+        </label>
+        <label className="field">
+          <span>Speech locale</span>
+          <input value={settings.recognitionLang} onChange={(event) => updateSettings({ recognitionLang: event.target.value })} />
+        </label>
+        <label className="field">
+          <span>Topic</span>
+          <input value={settings.topic} onChange={(event) => updateSettings({ topic: event.target.value })} />
+        </label>
+        <label className="field">
+          <span>Answer keyword</span>
+          <input value={settings.keyword} onChange={(event) => updateSettings({ keyword: event.target.value })} />
+        </label>
+      </section>
+
+      <section className="info-section">
+        <h2>App</h2>
+        <button className="secondary-action" onClick={installApp} disabled={installed}>
+          {installed ? "Installed" : "Install app"}
+        </button>
+        <p className="browser-support">
+          {installed
+            ? "AI Trainer is installed on this device."
+            : installReady
+              ? "Install is ready for this browser."
+              : "On iPhone, use Share, then Add to Home Screen. On Android, use the browser menu if the button is not active."}
+        </p>
+      </section>
+
+      <section className="info-section">
+        <h2>Microphone</h2>
+        <p className="browser-support">{speechSupported ? "Browser speech recognition is available." : "Browser speech recognition is not available here."}</p>
+      </section>
+    </div>
+  );
+}
+
+function DebugTab({
+  events,
+  clearEvents,
+  ledger,
+  providerId,
+  recentContext,
+  resetCosts
+}: {
+  events: DebugEvent[];
+  clearEvents: () => void;
   ledger: CostLedger;
+  providerId: ProviderId;
   recentContext: ChatMessage[];
   resetCosts: () => void;
 }) {
   return (
-    <div className="info-grid">
-      <section className="info-section">
-        <div className="section-title">
-          <Settings2 size={19} />
-          <h2>Providers</h2>
+    <div className="debug-view">
+      <div className="chat-header">
+        <div>
+          <h2>Debug Console</h2>
+          <p>Inspect system prompts, requests, answers, and app decisions.</p>
         </div>
-        <div className="provider-list">
-          {providerSummaries.map((provider) => (
-            <button
-              key={provider.id}
-              className={providerId === provider.id ? "provider selected" : "provider"}
-              onClick={() => setProviderId(provider.id)}
-            >
-              <span>{provider.name}</span>
-              <small>{provider.role}</small>
-              <em>{provider.quality}</em>
-              <strong>{provider.productionPath}</strong>
-            </button>
-          ))}
+        <button className="secondary-action" onClick={clearEvents}>Clear</button>
+      </div>
+
+      <section className="info-section">
+        <h2>Current Signal</h2>
+        <div className="decision-grid">
+          <span>provider: {providerId}</span>
+          <span>correctionSignal: {events[0]?.response.visualFeedback || "none"}</span>
+          <span>hasCorrection: {String(Boolean(events[0] && events[0].response.visualFeedback !== "none"))}</span>
+          <span>importantError: {String(events[0]?.response.visualFeedback === "error")}</span>
         </div>
       </section>
 
       <section className="info-section">
-        <div className="section-title">
-          <CircleDollarSign size={19} />
-          <h2>Costs</h2>
-        </div>
+        <h2>Costs</h2>
         <table>
           <thead>
             <tr>
@@ -509,82 +623,9 @@ function InfoTab({
         <button className="secondary-action" onClick={resetCosts}>Reset costs</button>
       </section>
 
-      <section className="info-section wide">
-        <h2>Structured Context</h2>
-        <p>The app keeps recent turns ready for a real provider call.</p>
+      <section className="info-section">
+        <h2>Context</h2>
         <pre>{JSON.stringify(recentContext, null, 2)}</pre>
-      </section>
-    </div>
-  );
-}
-
-function SettingsTab({
-  settings,
-  updateSettings,
-  speechSupported
-}: {
-  settings: AppSettings;
-  updateSettings: (settings: Partial<AppSettings>) => void;
-  speechSupported: boolean;
-}) {
-  return (
-    <div className="settings-grid">
-      <section className="info-section">
-        <h2>Training</h2>
-        <label className="field">
-          <span>Language or subject</span>
-          <input value={settings.languageName} onChange={(event) => updateSettings({ languageName: event.target.value })} />
-        </label>
-        <label className="field">
-          <span>Speech locale</span>
-          <input value={settings.recognitionLang} onChange={(event) => updateSettings({ recognitionLang: event.target.value })} />
-        </label>
-        <label className="field">
-          <span>Topic</span>
-          <input value={settings.topic} onChange={(event) => updateSettings({ topic: event.target.value })} />
-        </label>
-        <label className="field">
-          <span>Answer keyword</span>
-          <input value={settings.keyword} onChange={(event) => updateSettings({ keyword: event.target.value })} />
-        </label>
-      </section>
-
-      <section className="info-section">
-        <h2>Feedback</h2>
-        <Toggle label="Show structured JSON" enabled={settings.showStructured} onChange={(value) => updateSettings({ showStructured: value })} />
-        <Toggle label="Show visual feedback" enabled={settings.showVisualFeedback} onChange={(value) => updateSettings({ showVisualFeedback: value })} />
-        <Toggle label="Short voice hints" enabled={settings.shortVoiceHints} onChange={(value) => updateSettings({ shortVoiceHints: value })} />
-        <p className="browser-support">{speechSupported ? "Browser speech recognition is available." : "Browser speech recognition is not available here."}</p>
-      </section>
-    </div>
-  );
-}
-
-function DebugTab({
-  events,
-  clearEvents,
-  settings,
-  providerId
-}: {
-  events: DebugEvent[];
-  clearEvents: () => void;
-  settings: AppSettings;
-  providerId: ProviderId;
-}) {
-  return (
-    <div className="debug-view">
-      <div className="chat-header">
-        <div>
-          <h2>Debug Console</h2>
-          <p>Inspect system prompts, requests, answers, and app decisions.</p>
-        </div>
-        <button className="secondary-action" onClick={clearEvents}>Clear</button>
-      </div>
-
-      <section className="info-section">
-        <h2>Current System Prompt</h2>
-        <pre>{events[0]?.systemPrompt || "Server prompt appears after the first correction request."}</pre>
-        <p>Provider: {providerId}</p>
       </section>
 
       <div className="debug-events">
@@ -604,6 +645,9 @@ function DebugTab({
                 <span>respond: {String(event.decision.shouldRespond)}</span>
                 <span>speak: {String(event.decision.shouldSpeak)}</span>
                 <span>provider: {event.providerId}</span>
+                <span>correctionSignal: {event.response.visualFeedback}</span>
+                <span>hasCorrection: {String(event.response.visualFeedback !== "none")}</span>
+                <span>importantError: {String(event.response.visualFeedback === "error")}</span>
               </div>
               <details open>
                 <summary>Request</summary>

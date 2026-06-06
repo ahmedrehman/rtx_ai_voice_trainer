@@ -1,5 +1,12 @@
-const cacheName = "voice-trainer-v2";
-const appShell = ["./", "manifest.webmanifest", "icon.svg"];
+const cacheName = "voice-trainer-v3";
+const appShell = [
+  "./",
+  "manifest.webmanifest",
+  "icon.svg",
+  "icons/icon-192.png",
+  "icons/icon-512.png",
+  "icons/apple-touch-icon.png"
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(cacheName).then((cache) => cache.addAll(appShell)));

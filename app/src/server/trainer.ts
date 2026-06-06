@@ -25,10 +25,7 @@ export const defaultSettings: AppSettings = {
   languageName: "French",
   recognitionLang: "fr-FR",
   topic: "daily conversation",
-  keyword: "computer",
-  showStructured: true,
-  showVisualFeedback: true,
-  shortVoiceHints: true
+  keyword: "computer"
 };
 
 export const defaultLedger: Record<ProviderId, CostBucket> = {
@@ -55,7 +52,7 @@ export async function correctUtterance(input: CorrectionInput, env: TrainerEnv):
   const trainerText = correction.notes.length
     ? `${correction.corrected}\n${correction.notes.join(" ")}`
     : correction.corrected;
-  const spokenText = voiceText(correction, settings.shortVoiceHints);
+  const spokenText = voiceText(correction);
   const cost = estimateCost(providerId, {
     inputChars: request.text.length,
     outputChars: trainerText.length,
@@ -102,10 +99,6 @@ function estimateCost(providerId: ProviderId, usage: ProviderUsage): CostBucket 
   };
 }
 
-function voiceText(correction: StructuredCorrection, shortHints: boolean) {
-  if (!shortHints || correction.notes.length === 0) {
-    return correction.notes.length ? `${correction.corrected}. ${correction.notes[0]}` : correction.corrected;
-  }
-
+function voiceText(correction: StructuredCorrection) {
   return correction.corrected;
 }

@@ -90,7 +90,8 @@ p {
 
 .tabs button,
 .composer button,
-.secondary-action {
+.secondary-action,
+.text-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -168,6 +169,12 @@ p {
   border-color: #d7f36f;
 }
 
+.text-action.primary {
+  color: #1d251d;
+  background: #d7f36f;
+  border-color: #d7f36f;
+}
+
 .workspace {
   display: flex;
   flex-direction: column;
@@ -205,6 +212,43 @@ p {
 .listen-indicator.on {
   border-color: #6fbe80;
   background: #eaffec;
+}
+
+.signal-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #d3ccbe;
+  border-radius: 8px;
+  background: #fffdf8;
+}
+
+.signal-banner span {
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 0.86rem;
+}
+
+.signal-banner strong {
+  font-size: 0.9rem;
+}
+
+.signal-banner.improvement {
+  border-color: #e4cb5f;
+  background: #fff4bf;
+}
+
+.signal-banner.error {
+  border-color: #df8c8c;
+  background: #ffe0e0;
+}
+
+.signal-banner.none {
+  border-color: #cfd9d0;
+  background: #f4faf5;
 }
 
 .messages {
@@ -278,6 +322,16 @@ p {
   background: #fff0ad;
 }
 
+.feedback.error {
+  color: #6f1717;
+  background: #ffd6d6;
+}
+
+.feedback.none {
+  color: #4f6255;
+  background: #e7efe8;
+}
+
 pre {
   max-width: 100%;
   overflow: auto;
@@ -308,6 +362,7 @@ pre {
 }
 
 .composer button,
+.text-action,
 .secondary-action {
   color: #182019;
   background: #fffdf8;
@@ -316,6 +371,7 @@ pre {
 
 .composer button.answer-active,
 .composer button:hover,
+.text-action:hover,
 .secondary-action:hover {
   background: #d7f36f;
   border-color: #b9d952;
@@ -424,6 +480,19 @@ th {
   color: #182019;
 }
 
+.field select {
+  min-height: 42px;
+  border: 1px solid #d3ccbe;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fffdf8;
+  color: #182019;
+}
+
+.provider-note {
+  margin-top: 10px;
+}
+
 .browser-support {
   margin-top: 16px;
 }
@@ -508,7 +577,7 @@ summary {
 
   .tabs {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 6px;
     overflow-x: auto;
   }
@@ -604,6 +673,12 @@ summary {
   .listen-indicator {
     width: 100%;
     min-height: 38px;
+  }
+
+  .signal-banner {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-top: 10px;
   }
 
   .messages {

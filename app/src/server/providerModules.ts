@@ -19,11 +19,11 @@ export const providerModules: Record<ProviderId, ProviderModule> = {
   "browser-demo": {
     summary: {
       id: "browser-demo",
-      name: "Browser demo",
-      role: "Server demo provider",
-      pricingNote: "No external API cost.",
-      quality: "Best for testing the silent workflow before connecting paid services.",
-      productionPath: "Server-side deterministic trainer module."
+      name: "Demo mode",
+      role: "Free test mode",
+      pricingNote: "No paid API calls.",
+      quality: "Checks only a few built-in example mistakes.",
+      productionPath: "Use this only to test the app controls."
     },
     correct: async (input) => demoCorrect(input)
   },
@@ -31,10 +31,10 @@ export const providerModules: Record<ProviderId, ProviderModule> = {
     summary: {
       id: "openai",
       name: "OpenAI",
-      role: "Realtime or STT + LLM + TTS capable",
-      pricingNote: "Uses OPENAI_API_KEY only on the server.",
-      quality: "Recommended first production provider.",
-      productionPath: "Server module calls OpenAI Responses API."
+      role: "Real AI corrections",
+      pricingNote: "Uses your OpenAI API key.",
+      quality: "Best default for real correction quality.",
+      productionPath: "Costs money based on OpenAI usage."
     },
     correct: correctWithOpenAI
   },
@@ -42,10 +42,10 @@ export const providerModules: Record<ProviderId, ProviderModule> = {
     summary: {
       id: "deepgram-elevenlabs",
       name: "Deepgram + ElevenLabs",
-      role: "Deepgram STT + correction module + ElevenLabs TTS",
-      pricingNote: "Uses DEEPGRAM_API_KEY and ELEVENLABS_API_KEY only on the server.",
-      quality: "Strong voice quality, more integration work.",
-      productionPath: "Server module owns Deepgram/ElevenLabs credentials and cost tracking."
+      role: "Speech input + high quality voice",
+      pricingNote: "Uses Deepgram and ElevenLabs keys.",
+      quality: "For stronger speech and spoken output.",
+      productionPath: "Costs money on those services."
     },
     correct: async (input, env) => {
       if (!env.DEEPGRAM_API_KEY || !env.ELEVENLABS_API_KEY) {
@@ -58,10 +58,10 @@ export const providerModules: Record<ProviderId, ProviderModule> = {
     summary: {
       id: "azure",
       name: "Azure Speech",
-      role: "Enterprise speech services",
-      pricingNote: "Uses AZURE_SPEECH_KEY and AZURE_SPEECH_REGION only on the server.",
-      quality: "Reliable, but heavier setup for a small prototype.",
-      productionPath: "Server module owns Azure Speech credentials and cost tracking."
+      role: "Microsoft speech services",
+      pricingNote: "Uses Azure Speech key and region.",
+      quality: "Useful if you already use Azure.",
+      productionPath: "Costs money on Azure."
     },
     correct: async (input, env) => {
       if (!env.AZURE_SPEECH_KEY || !env.AZURE_SPEECH_REGION) {
@@ -74,10 +74,10 @@ export const providerModules: Record<ProviderId, ProviderModule> = {
     summary: {
       id: "google",
       name: "Google Cloud",
-      role: "Speech and TTS services",
-      pricingNote: "Uses GOOGLE_CLOUD_API_KEY only on the server.",
-      quality: "Solid speech infrastructure, separate integration path.",
-      productionPath: "Server module owns Google Cloud credentials and cost tracking."
+      role: "Google speech services",
+      pricingNote: "Uses Google Cloud API key.",
+      quality: "Useful if you already use Google Cloud.",
+      productionPath: "Costs money on Google Cloud."
     },
     correct: async (input, env) => {
       if (!env.GOOGLE_CLOUD_API_KEY) {
