@@ -72,7 +72,7 @@ export async function correctUtterance(input: CorrectionInput, env: TrainerEnv):
       decision: {
         keywordSent: correction.keywordSent,
         shouldRespond: correction.shouldRespond,
-        shouldSpeak: correction.shouldRespond && request.voiceOutput,
+        shouldSpeak: request.voiceOutput && (correction.shouldRespond || correction.visualFeedback !== "none"),
         trigger: correction.trigger
       }
     }

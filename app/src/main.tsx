@@ -114,7 +114,6 @@ function App() {
   const audioProcessorRef = useRef<ScriptProcessorNode | null>(null);
   const pcmChunksRef = useRef<Float32Array[]>([]);
   const wavForcedRef = useRef(false);
-  const audioInputRef = useRef<HTMLInputElement | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const playbackRef = useRef<HTMLAudioElement | null>(null);
   const playbackUrlRef = useRef<string | null>(null);
@@ -357,7 +356,7 @@ function App() {
       setStatus("Recording audio AI test");
       logActivity("Audio AI record", "Recording 4 seconds of raw audio");
 
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextClass) {
         stream.getTracks().forEach((track) => track.stop());
@@ -681,7 +680,9 @@ function App() {
       response: correction
     };
 
-    if (correction.shouldRespond) {
+    const shouldSpeakCorrection = speakEnabledRef.current && correction.visualFeedback !== "none" && Boolean(result.spokenText || result.trainerText);
+
+    if (correction.shouldRespond || shouldSpeakCorrection) {
       const willSpeak = speakEnabledRef.current && Boolean(result.spokenText || result.trainerText);
       nextMessages.push({
         id: createId(),
@@ -692,12 +693,14 @@ function App() {
         createdAt: new Date().toISOString()
       });
       recordCost(result.cost);
-      setStatus(correction.trigger === "keyword" ? "Answered by keyword" : "Answered by request");
+      setStatus(correction.shouldRespond
+        ? correction.trigger === "keyword" ? "Answered by keyword" : "Answered by request"
+        : "Speaking correction");
       if (willSpeak) {
         if (settings.voiceImplementation === "dummy") {
           dummySpeak(result.spokenText || result.trainerText);
         } else {
-          void speakWithProvider(result.spokenText || result.trainerText, `${voiceImplementationLabel(settings.voiceImplementation)} trigger=${correction.trigger}`);
+          void speakWithProvider(result.spokenText || result.trainerText, `${voiceImplementationLabel(settings.voiceImplementation)} trigger=${correction.trigger} signal=${correction.visualFeedback}`);
         }
       }
     } else {
@@ -779,24 +782,8 @@ function App() {
     stopListening();
   }
 
-  function handleAudioFile(file: File | undefined) {
-    if (!file) {
-      setListenEnabled(false);
-      listenEnabledRef.current = false;
-      setStatus("No audio selected");
-      logActivity("Audio input cancelled", "No audio file was selected");
-      return;
-    }
-
-    const forced = correctNextRef.current;
-    correctNextRef.current = false;
-    setListenEnabled(false);
-    listenEnabledRef.current = false;
-    void transcribeAndSubmit(file, forced);
-  }
-
   function startListening() {
-    logActivity("Listen enabled", speechSupported ? "Using live speech capture" : "Using audio capture fallback");
+    logActivity("Listen enabled", speechSupported ? "Using live speech capture" : "Using microphone audio fallback");
     if (!speechSupported) {
       void startAudioRecording();
       return;
@@ -844,9 +831,10 @@ function App() {
 
   async function startAudioRecording() {
     if (!microphoneSupported) {
-      setStatus("Open audio recorder");
-      logActivity("Audio recorder fallback", "This device requires native audio capture");
-      audioInputRef.current?.click();
+      setListenEnabled(false);
+      listenEnabledRef.current = false;
+      setStatus("Microphone listening is not supported in this browser");
+      logActivity("Listen unsupported", "No getUserMedia microphone API. Not opening camera or native capture.");
       return;
     }
 
@@ -856,7 +844,7 @@ function App() {
     }
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       audioChunksRef.current = [];
       const recorder = new MediaRecorder(stream);
 
@@ -897,12 +885,14 @@ function App() {
 
   async function startWavRecording() {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextClass) {
-        setStatus("Open audio recorder");
-        logActivity("Audio recorder fallback", "This device requires native audio capture");
-        audioInputRef.current?.click();
+        stream.getTracks().forEach((track) => track.stop());
+        setListenEnabled(false);
+        listenEnabledRef.current = false;
+        setStatus("Microphone recording is not supported in this browser");
+        logActivity("Listen unsupported", "No AudioContext fallback. Not opening camera or native capture.");
         return;
       }
 
@@ -1021,17 +1011,6 @@ function App() {
               Test voice
             </button>
           </div>
-          <input
-            ref={audioInputRef}
-            type="file"
-            accept="audio/*"
-            capture
-            className="hidden-file-input"
-            onChange={(event) => {
-              handleAudioFile(event.target.files?.[0]);
-              event.currentTarget.value = "";
-            }}
-          />
           <p className="status">{status}</p>
         </section>
       </aside>
