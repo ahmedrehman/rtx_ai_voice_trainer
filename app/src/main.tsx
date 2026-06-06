@@ -35,6 +35,14 @@ function apiUrl(path: string) {
   return `${import.meta.env.BASE_URL}${path.replace(/^\//, "")}`;
 }
 
+function createId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function App() {
   const [tab, setTab] = useState<Tab>("chat");
   const [providerId, setProviderId] = useState<ProviderId>("openai");
@@ -118,7 +126,7 @@ function App() {
 
   function logActivity(label: string, detail: string) {
     setActivityEvents((current) => [
-      { id: crypto.randomUUID(), createdAt: new Date().toISOString(), label, detail },
+      { id: createId(), createdAt: new Date().toISOString(), label, detail },
       ...current
     ].slice(0, 30));
   }
@@ -207,7 +215,7 @@ function App() {
     logActivity("Correction request", trimmed);
 
     const learnerMessage: ChatMessage = {
-      id: crypto.randomUUID(),
+      id: createId(),
       speaker: "learner",
       text: trimmed,
       spoken: false,
@@ -244,7 +252,7 @@ function App() {
 
     const nextMessages: ChatMessage[] = [learnerMessage];
     const debugEvent: DebugEvent = {
-      id: crypto.randomUUID(),
+      id: createId(),
       createdAt: new Date().toISOString(),
       providerId,
       systemPrompt: result.debug.systemPrompt,
@@ -255,7 +263,7 @@ function App() {
 
     if (correction.shouldRespond) {
       nextMessages.push({
-        id: crypto.randomUUID(),
+        id: createId(),
         speaker: "trainer",
         text: result.trainerText,
         correction,
@@ -266,7 +274,7 @@ function App() {
       setStatus(correction.trigger === "keyword" ? "Answered by keyword" : "Answered by request");
     } else {
       nextMessages.push({
-        id: crypto.randomUUID(),
+        id: createId(),
         speaker: "system",
         text: correction.visualFeedback === "none"
           ? "Captured. No correction signal."
