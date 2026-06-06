@@ -41,6 +41,7 @@ function App() {
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [debugEvents, setDebugEvents] = useState<DebugEvent[]>([]);
+  const [activityEvents, setActivityEvents] = useState<Array<{ id: string; createdAt: string; label: string; detail: string }>>([]);
   const [draft, setDraft] = useState("");
   const [listenEnabled, setListenEnabled] = useState(false);
   const [listening, setListening] = useState(false);
@@ -115,6 +116,13 @@ function App() {
     setSettings((current) => ({ ...current, ...next }));
   }
 
+  function logActivity(label: string, detail: string) {
+    setActivityEvents((current) => [
+      { id: crypto.randomUUID(), createdAt: new Date().toISOString(), label, detail },
+      ...current
+    ].slice(0, 30));
+  }
+
   async function installApp() {
     if (!installPrompt) {
       setStatus("Use browser menu to install app");
@@ -177,20 +185,26 @@ function App() {
   async function transcribeAndSubmit(blob: Blob, forced: boolean) {
     try {
       setStatus("Transcribing");
+      logActivity("Transcribing", `${Math.round(blob.size / 1024)} KB audio`);
       const transcript = await transcribeAudio(blob);
       if (!transcript) {
         setStatus("No speech heard");
+        logActivity("No speech heard", "Transcription returned empty text");
         return;
       }
+      logActivity("Transcript", transcript);
       await submitUtterance(transcript, { forced, speechInput: true });
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Audio transcription failed");
+      const message = error instanceof Error ? error.message : "Audio transcription failed";
+      setStatus(message);
+      logActivity("Transcription error", message);
     }
   }
 
   async function submitUtterance(rawText: string, options: { forced?: boolean; manualText?: boolean; speechInput?: boolean } = {}) {
     const trimmed = rawText.trim();
     if (!trimmed) return;
+    logActivity("Correction request", trimmed);
 
     const learnerMessage: ChatMessage = {
       id: crypto.randomUUID(),
@@ -219,12 +233,14 @@ function App() {
 
     if (!response.ok) {
       setStatus("Server correction failed");
+      logActivity("Correction error", `HTTP ${response.status}`);
       return;
     }
 
     const result = await response.json() as CorrectionResult;
     const correction = result.correction;
     setLatestSignal(correction.visualFeedback);
+    logActivity("Correction result", `correctionSignal=${correction.visualFeedback}`);
 
     const nextMessages: ChatMessage[] = [learnerMessage];
     const debugEvent: DebugEvent = {
@@ -268,6 +284,7 @@ function App() {
   }
 
   function correctNow() {
+    logActivity("Correct now", draft.trim() ? "Correcting typed text" : "Waiting for speech");
     if (draft.trim()) {
       void submitUtterance(draft, { forced: true, manualText: true });
       return;
@@ -287,6 +304,7 @@ function App() {
   }
 
   function startListening() {
+    logActivity("Listen enabled", speechSupported ? "Using browser speech recognition" : "Using microphone recording fallback");
     if (!speechSupported) {
       void startAudioRecording();
       return;
@@ -308,11 +326,14 @@ function App() {
       }
       const forced = correctNextRef.current;
       correctNextRef.current = false;
+      logActivity("Speech captured", transcript || "Empty transcript");
       void submitUtterance(transcript, { forced, speechInput: true });
     };
 
     recognition.onerror = (event) => {
-      setStatus(event.error === "no-speech" ? "No speech heard" : `Voice error: ${event.error}`);
+      const message = event.error === "no-speech" ? "No speech heard" : `Voice error: ${event.error}`;
+      setStatus(message);
+      logActivity("Speech recognition error", message);
       setListening(false);
     };
 
@@ -365,10 +386,13 @@ function App() {
       recorder.start();
       setListening(true);
       setStatus("Recording");
+      logActivity("Recording started", "Microphone permission granted");
     } catch (error) {
       setListenEnabled(false);
       setListening(false);
-      setStatus(error instanceof Error ? error.message : "Microphone permission failed");
+      const message = error instanceof Error ? error.message : "Microphone permission failed";
+      setStatus(message);
+      logActivity("Microphone error", message);
     }
   }
 
@@ -380,6 +404,7 @@ function App() {
     recognitionRef.current?.stop();
     setListening(false);
     setStatus("Listening stopped");
+    logActivity("Listen disabled", "Stopped listening");
   }
 
   return (
@@ -454,7 +479,11 @@ function App() {
         {tab === "debug" && (
           <DebugTab
             events={debugEvents}
-            clearEvents={() => setDebugEvents([])}
+            activityEvents={activityEvents}
+            clearEvents={() => {
+              setDebugEvents([]);
+              setActivityEvents([]);
+            }}
             ledger={ledger}
             providerId={providerId}
             recentContext={recentContext}
@@ -651,6 +680,7 @@ function SettingsTab({
 
 function DebugTab({
   events,
+  activityEvents,
   clearEvents,
   ledger,
   providerId,
@@ -658,6 +688,7 @@ function DebugTab({
   resetCosts
 }: {
   events: DebugEvent[];
+  activityEvents: Array<{ id: string; createdAt: string; label: string; detail: string }>;
   clearEvents: () => void;
   ledger: CostLedger;
   providerId: ProviderId;
@@ -682,6 +713,23 @@ function DebugTab({
           <span>hasCorrection: {String(Boolean(events[0] && events[0].response.visualFeedback !== "none"))}</span>
           <span>importantError: {String(events[0]?.response.visualFeedback === "error")}</span>
         </div>
+      </section>
+
+      <section className="info-section">
+        <h2>Activity Log</h2>
+        {activityEvents.length === 0 ? (
+          <p>No activity yet. Tap Listen or Correct now.</p>
+        ) : (
+          <div className="debug-events">
+            {activityEvents.map((event) => (
+              <div className="activity-event" key={event.id}>
+                <strong>{event.label}</strong>
+                <span>{new Date(event.createdAt).toLocaleTimeString()}</span>
+                <p>{event.detail}</p>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="info-section">

@@ -1,4 +1,4 @@
-const cacheName = "voice-trainer-v3";
+const cacheName = "ai-trainer-v5";
 const appShell = [
   "./",
   "manifest.webmanifest",
@@ -15,11 +15,16 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((key) => key !== cacheName).map((key) => caches.delete(key)))
-    )
+    caches.keys()
+      .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+      .then(() => self.clients.claim())
+      .then(() => self.clients.matchAll({ type: "window" }))
+      .then((clients) => {
+        for (const client of clients) {
+          client.navigate(client.url);
+        }
+      })
   );
-  self.clients.claim();
 });
 
 self.addEventListener("fetch", (event) => {
@@ -29,7 +34,9 @@ self.addEventListener("fetch", (event) => {
     fetch(event.request)
       .then((response) => {
         const copy = response.clone();
-        caches.open(cacheName).then((cache) => cache.put(event.request, copy));
+        if (!event.request.url.includes("/api/")) {
+          caches.open(cacheName).then((cache) => cache.put(event.request, copy));
+        }
         return response;
       })
       .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./")))

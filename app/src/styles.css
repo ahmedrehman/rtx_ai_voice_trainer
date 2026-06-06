@@ -512,6 +512,26 @@ th {
   gap: 12px;
 }
 
+.activity-event {
+  display: grid;
+  gap: 5px;
+  padding: 10px 0;
+  border-top: 1px solid #eee5d6;
+}
+
+.activity-event:first-child {
+  border-top: 0;
+}
+
+.activity-event strong {
+  color: #182019;
+}
+
+.activity-event span {
+  color: #746f66;
+  font-size: 0.84rem;
+}
+
 .debug-event-header,
 .decision-grid {
   display: flex;
