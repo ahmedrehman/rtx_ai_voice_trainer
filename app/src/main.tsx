@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { defaultLedger, providerSummaries } from "./clientConfig";
 import { clearLedger, loadLedger, loadSettings, saveLedger, saveSettings } from "./storage";
-import type { AppSettings, ChatMessage, CorrectionInput, CorrectionResult, CostBucket, CostLedger, DebugEvent, ProviderId, SpeechRecognitionConstructor, SpeechRecognitionEventLike, SpeechRecognitionLike, Tab } from "./types";
+import type { AppSettings, ChatMessage, CorrectionInput, CorrectionResult, CostBucket, CostLedger, DebugEvent, ProviderId, SpeechRecognitionConstructor, SpeechRecognitionEventLike, SpeechRecognitionLike, StructuredCorrection, Tab } from "./types";
 import type { VoiceImplementation } from "./types";
 import { base64ToAudioBlob, blobToBase64, voiceImplementationLabel, voiceImplementationOptions } from "./voiceTrainer";
 import "./styles.css";
@@ -632,8 +632,37 @@ function App() {
       result = await response.json() as CorrectionResult;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Server correction failed";
+      const correction = technicalCorrection(request, message);
+      const debugEvent: DebugEvent = {
+        id: createId(),
+        createdAt: new Date().toISOString(),
+        providerId,
+        systemPrompt: "Request failed before server returned debug prompt.",
+        request,
+        decision: {
+          keywordSent: false,
+          shouldRespond: true,
+          shouldSpeak: false,
+          trigger: request.forced ? "button" : request.manualText ? "manual-text" : "silent"
+        },
+        response: correction
+      };
       setStatus(message);
       logActivity("Correction error", message);
+      setLatestSignal("error");
+      setMessages((current) => [
+        ...current,
+        learnerMessage,
+        {
+          id: createId(),
+          speaker: "system",
+          text: `Technical error: ${message}`,
+          correction,
+          spoken: false,
+          createdAt: new Date().toISOString()
+        } satisfies ChatMessage
+      ].slice(-40));
+      setDebugEvents((current) => [debugEvent, ...current].slice(0, 50));
       return;
     }
 
@@ -688,6 +717,20 @@ function App() {
     setMessages((current) => [...current, ...nextMessages].slice(-40));
     setDebugEvents((current) => [debugEvent, ...current].slice(0, 50));
     setDraft("");
+  }
+
+  function technicalCorrection(request: CorrectionInput, message: string): StructuredCorrection {
+    return {
+      text: request.text,
+      corrected: request.text,
+      keywordSent: false,
+      shouldRespond: true,
+      trigger: request.forced ? "button" : request.manualText ? "manual-text" : "silent",
+      notes: [message],
+      visualFeedback: "error",
+      topic: request.settings.topic,
+      languageName: request.settings.languageName
+    };
   }
 
   function correctNow() {
@@ -1490,15 +1533,15 @@ function DebugTab({
                 <span>importantError: {String(event.response.visualFeedback === "error")}</span>
               </div>
               <details open>
-                <summary>Request</summary>
+                <summary>Full request JSON</summary>
                 <pre>{JSON.stringify(event.request, null, 2)}</pre>
               </details>
               <details open>
-                <summary>Response</summary>
+                <summary>Full response JSON or technical error</summary>
                 <pre>{JSON.stringify(event.response, null, 2)}</pre>
               </details>
-              <details>
-                <summary>System Prompt</summary>
+              <details open>
+                <summary>System prompt</summary>
                 <pre>{event.systemPrompt}</pre>
               </details>
             </section>

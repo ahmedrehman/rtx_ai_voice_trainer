@@ -112,11 +112,56 @@ async function correctWithOpenAI(input: CorrectionInput, env: TrainerEnv): Promi
   });
 
   if (!response.ok) {
-    throw new Error(`OpenAI correction failed with ${response.status}`);
+    const detail = await response.text().catch(() => "");
+    return providerError(input, `OpenAI correction failed with ${response.status}${detail ? `: ${detail}` : ""}`);
   }
 
-  const data = await response.json() as { output_text?: string };
-  return parseCorrection(data.output_text || "", input);
+  const data = await response.json();
+  const raw = extractResponsesText(data);
+  if (!raw.trim()) {
+    return providerError(input, `OpenAI correction returned no text. Raw response keys: ${Object.keys(data as Record<string, unknown>).join(", ")}`);
+  }
+
+  try {
+    return parseCorrection(raw, input);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not parse OpenAI correction JSON";
+    return providerError(input, `OpenAI correction JSON parse failed: ${message}. Raw: ${raw.slice(0, 500)}`);
+  }
+}
+
+function extractResponsesText(data: unknown) {
+  const response = data as {
+    output_text?: string;
+    output?: Array<{
+      content?: Array<{
+        text?: string;
+        type?: string;
+      }>;
+    }>;
+  };
+
+  if (typeof response.output_text === "string") return response.output_text;
+
+  return (response.output || [])
+    .flatMap((item) => item.content || [])
+    .map((content) => content.text || "")
+    .filter(Boolean)
+    .join("\n");
+}
+
+function providerError(input: CorrectionInput, message: string): StructuredCorrection {
+  return {
+    text: input.text,
+    corrected: input.text,
+    keywordSent: false,
+    shouldRespond: true,
+    trigger: input.forced ? "button" : input.manualText ? "manual-text" : "silent",
+    notes: [message],
+    visualFeedback: "error",
+    topic: input.settings.topic,
+    languageName: input.settings.languageName
+  };
 }
 
 function notConfigured(input: CorrectionInput, providerName: string): StructuredCorrection {
