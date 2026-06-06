@@ -127,7 +127,7 @@ function PageView({ page }: { page: Page }) {
 
 function MeaningfulAudioChunkDebug() {
   const [maxDurationMs, setMaxDurationMs] = useState(5000);
-  const [silenceMs, setSilenceMs] = useState(900);
+  const [speechResultIdleMs, setSpeechResultIdleMs] = useState(900);
   const [speechCheckLang, setSpeechCheckLang] = useState("fr-FR");
   const [mimeType, setMimeType] = useState("");
   const [running, setRunning] = useState(false);
@@ -147,13 +147,16 @@ function MeaningfulAudioChunkDebug() {
   async function runAudioChunk() {
     const input = {
       maxDurationMs,
-      silenceMs,
+      speechResultIdleMs,
       speechCheckLang,
       mimeType: mimeType || undefined,
       browserNeeds: {
         secureContext: window.isSecureContext,
         getUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
         speechRecognitionChecker: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+        realAudioSilenceDetectionImplemented: false,
+        microphoneVolumeDetectionImplemented: false,
+        voiceActivityDetectionImplemented: false,
         directUserClick: true,
         requestedMedia: { audio: true, video: false }
       }
@@ -178,7 +181,7 @@ function MeaningfulAudioChunkDebug() {
         },
         {
           maxDurationMs,
-          silenceMs,
+          silenceMs: speechResultIdleMs,
           speechCheckLang,
           mimeType: mimeType || undefined
         }
@@ -216,11 +219,14 @@ function MeaningfulAudioChunkDebug() {
     <section className="debug-method">
       <div className="explain">
         <h2>What this function does</h2>
+        <p className="not-implemented">REAL AUDIO SILENCE DETECTION: NOT IMPLEMENTED</p>
+        <p className="not-implemented">MICROPHONE VOLUME / RMS DETECTION: NOT IMPLEMENTED</p>
+        <p className="not-implemented">VOICE ACTIVITY DETECTION: NOT IMPLEMENTED</p>
         <ul>
           <li>Calls browser microphone permission from a direct button click.</li>
           <li>Requests microphone only: `audio: true`, `video: false`.</li>
           <li>Records audio with `MediaRecorder`.</li>
-          <li>If browser SpeechRecognition exists, it uses it only as a speech boundary checker.</li>
+          <li>If browser SpeechRecognition exists, it uses it only as a helper text/speech-result checker.</li>
           <li>If browser SpeechRecognition is missing, it records until max duration.</li>
           <li>Returns a standard `status` object and audio chunk metadata.</li>
         </ul>
@@ -235,14 +241,14 @@ function MeaningfulAudioChunkDebug() {
             <small>Maximum recording time. Used when no final speech boundary is detected.</small>
           </label>
           <label className="field">
-            <span>silenceMs</span>
-            <input type="number" value={silenceMs} min={200} step={100} onChange={(event) => setSilenceMs(Number(event.target.value))} />
-            <small>After detected speech activity, this much silence stops the chunk.</small>
+            <span>speechResultIdleMs</span>
+            <input type="number" value={speechResultIdleMs} min={200} step={100} onChange={(event) => setSpeechResultIdleMs(Number(event.target.value))} />
+            <small>NOT real silence detection. This waits after the browser SpeechRecognition helper reports a text result.</small>
           </label>
           <label className="field">
             <span>speechCheckLang</span>
             <input value={speechCheckLang} onChange={(event) => setSpeechCheckLang(event.target.value)} />
-            <small>Browser speech checker locale. Example: `fr-FR`, `en-US`, `de-DE`.</small>
+            <small>Only for browser SpeechRecognition helper. It tells the browser what language to expect when trying to produce helper text. It is NOT AI analysis and NOT required if SpeechRecognition is unavailable.</small>
           </label>
           <label className="field">
             <span>mimeType</span>
@@ -255,7 +261,10 @@ function MeaningfulAudioChunkDebug() {
             secureContext: window.isSecureContext,
             getUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
             mediaRecorder: typeof MediaRecorder !== "undefined",
-            speechRecognitionChecker: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition)
+            speechRecognitionChecker: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+            realAudioSilenceDetectionImplemented: false,
+            microphoneVolumeDetectionImplemented: false,
+            voiceActivityDetectionImplemented: false
           }, null, 2)}</pre>
 
           <button className="run-button" type="button" onClick={() => void runAudioChunk()} disabled={running}>

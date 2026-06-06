@@ -261,6 +261,17 @@ p {
   line-height: 1.5;
 }
 
+.not-implemented {
+  padding: 10px 12px;
+  border: 2px solid #b00020;
+  border-radius: 8px;
+  color: #b00020;
+  background: #fff0f2;
+  font-size: 1rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .debug-grid {
   display: grid;
   gap: 14px;
