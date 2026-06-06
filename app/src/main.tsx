@@ -120,6 +120,8 @@ function App() {
   const listenEnabledRef = useRef(false);
   const speakEnabledRef = useRef(false);
   const correctNextRef = useRef(false);
+  const listeningPausedForPlaybackRef = useRef(false);
+  const suppressListeningUntilRef = useRef(0);
 
   const provider = providerSummaries.find((item) => item.id === providerId) ?? providerSummaries[0];
   const speechSupported = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
@@ -228,6 +230,7 @@ function App() {
 
     try {
       stopPlayback();
+      pauseListeningForPlayback();
       setSpeaking(true);
       setStatus("Generating voice");
       logActivity("AI voice request", reason);
@@ -267,6 +270,7 @@ function App() {
         setStatus("Ready");
         logActivity("AI voice ended", reason);
         cleanupPlaybackUrl();
+        resumeListeningAfterPlayback();
       };
       audio.onerror = () => {
         setSpeaking(false);
@@ -274,6 +278,7 @@ function App() {
         setStatus(message);
         logActivity("Audio playback error", message);
         cleanupPlaybackUrl();
+        resumeListeningAfterPlayback();
       };
       await audio.play();
     } catch (error) {
@@ -281,6 +286,7 @@ function App() {
       const message = error instanceof Error ? error.message : "AI voice failed";
       setStatus(message);
       logActivity("AI voice error", message);
+      resumeListeningAfterPlayback();
     }
   }
 
@@ -309,6 +315,7 @@ function App() {
     }
 
     window.speechSynthesis.cancel();
+    pauseListeningForPlayback();
     const utterance = new SpeechSynthesisUtterance(trimmed);
     utterance.lang = settings.recognitionLang || "fr-FR";
     utterance.rate = 0.95;
@@ -321,12 +328,14 @@ function App() {
       setSpeaking(false);
       setStatus("Ready");
       logActivity("Dummy speak ended", "Browser speech synthesis");
+      resumeListeningAfterPlayback();
     };
     utterance.onerror = (event) => {
       setSpeaking(false);
       const message = `Dummy speak failed: ${event.error}`;
       setStatus(message);
       logActivity("Dummy speak error", message);
+      resumeListeningAfterPlayback();
     };
     window.speechSynthesis.speak(utterance);
   }
@@ -449,6 +458,7 @@ function App() {
 
   async function playBase64Audio(audioBase64: string, format: string, reason: string) {
     stopPlayback();
+    pauseListeningForPlayback();
     setSpeaking(true);
     const blob = base64ToAudioBlob(audioBase64, format);
     const url = URL.createObjectURL(blob);
@@ -464,6 +474,7 @@ function App() {
       setStatus("Ready");
       logActivity("Audio AI ended", reason);
       cleanupPlaybackUrl();
+      resumeListeningAfterPlayback();
     };
     audio.onerror = () => {
       setSpeaking(false);
@@ -471,6 +482,7 @@ function App() {
       setStatus(message);
       logActivity("Audio AI playback error", message);
       cleanupPlaybackUrl();
+      resumeListeningAfterPlayback();
     };
     await audio.play();
   }
@@ -495,6 +507,28 @@ function App() {
     setSpeaking(false);
   }
 
+  function pauseListeningForPlayback() {
+    suppressListeningUntilRef.current = Date.now() + 2500;
+    if (recognitionRef.current) {
+      listeningPausedForPlaybackRef.current = true;
+      recognitionRef.current.abort();
+      recognitionRef.current = null;
+      setListening(false);
+      logActivity("Listen paused", "Paused while AI voice is playing");
+    }
+  }
+
+  function resumeListeningAfterPlayback() {
+    suppressListeningUntilRef.current = Date.now() + 1500;
+    window.setTimeout(() => {
+      listeningPausedForPlaybackRef.current = false;
+      if (listenEnabledRef.current && !recognitionRef.current && !mediaRecorderRef.current && !audioContextRef.current) {
+        logActivity("Listen resumed", "Restarting after AI voice cooldown");
+        startListening();
+      }
+    }, 1600);
+  }
+
   function cleanupPlaybackUrl() {
     if (playbackUrlRef.current) {
       URL.revokeObjectURL(playbackUrlRef.current);
@@ -504,6 +538,8 @@ function App() {
 
   function stopAll() {
     listenEnabledRef.current = false;
+    listeningPausedForPlaybackRef.current = false;
+    suppressListeningUntilRef.current = 0;
     setListenEnabled(false);
     stopListening();
     stopPlayback();
@@ -783,6 +819,14 @@ function App() {
   }
 
   function startListening() {
+    if (Date.now() < suppressListeningUntilRef.current || listeningPausedForPlaybackRef.current || speaking) {
+      logActivity("Listen delayed", "AI voice cooldown is active");
+      window.setTimeout(() => {
+        if (listenEnabledRef.current) startListening();
+      }, 1000);
+      return;
+    }
+
     logActivity("Listen enabled", speechSupported ? "Using live speech capture" : "Using microphone audio fallback");
     if (!speechSupported) {
       void startAudioRecording();
@@ -799,6 +843,10 @@ function App() {
     recognition.interimResults = false;
 
     recognition.onresult = (event: SpeechRecognitionEventLike) => {
+      if (speaking || Date.now() < suppressListeningUntilRef.current) {
+        logActivity("Speech ignored", "Ignored captured audio during AI voice cooldown");
+        return;
+      }
       let transcript = "";
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         transcript += event.results[index][0].transcript;
@@ -818,15 +866,23 @@ function App() {
 
     recognition.onend = () => {
       setListening(false);
-      if (listenEnabledRef.current) {
+      recognitionRef.current = null;
+      if (listenEnabledRef.current && !listeningPausedForPlaybackRef.current && Date.now() >= suppressListeningUntilRef.current) {
         window.setTimeout(() => startListening(), 500);
       }
     };
 
     recognitionRef.current = recognition;
-    recognition.start();
-    setListening(true);
-    setStatus("Listening");
+    try {
+      recognition.start();
+      setListening(true);
+      setStatus("Listening");
+    } catch (error) {
+      recognitionRef.current = null;
+      const message = error instanceof Error ? error.message : "Could not start speech recognition";
+      setStatus(message);
+      logActivity("Speech recognition error", message);
+    }
   }
 
   async function startAudioRecording() {
@@ -964,6 +1020,7 @@ function App() {
       return;
     }
     recognitionRef.current?.stop();
+    recognitionRef.current = null;
     setListening(false);
     setStatus("Listening stopped");
     logActivity("Listen disabled", "Stopped listening");
