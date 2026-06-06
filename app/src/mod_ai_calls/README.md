@@ -1,33 +1,38 @@
 # mod_ai_calls
 
-Server-side AI call module.
+- server-side AI calls only
+- no browser imports
+- API keys stay server-side
 
-## Public Methods
-
-- `callOpenAiCorrectionJson(config, request)`
-  - Calls OpenAI Responses API.
-  - Returns `{ rawText, rawResponse }`.
-  - Used for structured correction JSON.
+## methods
 
 - `callOpenAiTranscription(config, body, contentType?)`
-  - Calls OpenAI audio transcription.
-  - Input is multipart/form-data body.
-  - Returns `{ text }`.
+  - input: browser microphone audio upload
+  - body: `multipart/form-data`
+  - output: `{ text }`
+  - note: audio -> text
+
+- `callOpenAiCorrectionJson(config, request)`
+  - input: transcript text
+  - output: `{ rawText, rawResponse }`
+  - note: text -> correction JSON
 
 - `callOpenAiSpeech(config, request)`
-  - Calls OpenAI speech/audio output.
-  - Input is text.
-  - Returns `{ body, contentType }` audio stream.
+  - input: correction/answer text
+  - output: `{ body, contentType }`
+  - note: text -> AI voice audio stream
 
 - `callOpenAiAudioTurn(config, request)`
-  - Calls audio-in/audio-out model.
-  - Input is base64 audio.
-  - Returns `{ model, text, audioBase64, audioFormat }`.
+  - input: base64 microphone audio
+  - output: `{ model, text, audioBase64, audioFormat }`
+  - note: audio -> AI text + AI voice audio
 
 - `extractResponsesText(data)`
-  - Extracts text from Responses API payload.
+  - input: Responses API JSON
+  - output: text string
+  - note: provider response -> raw text
 
-## Config
+## config
 
 ```ts
 type AiCallConfig = {
@@ -35,7 +40,7 @@ type AiCallConfig = {
 };
 ```
 
-## Requests
+## request types
 
 ```ts
 type AiCorrectionRequest = {
@@ -62,14 +67,4 @@ type AiAudioTurnRequest = {
   prompt: string;
 };
 ```
-
-## Used By
-
-- `src/server/providerModules.ts`
-- `src/server/http.ts`
-- `src/localServer.ts`
-
-## Rule
-
-No browser code imports this module.
 
