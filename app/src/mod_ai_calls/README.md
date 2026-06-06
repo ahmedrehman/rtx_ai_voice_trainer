@@ -1,75 +1,81 @@
 # mod_ai_calls
 
-- server-side AI calls only
+- server-side only
+- OpenAI calls only
+- API key required
 - no browser imports
-- API keys stay server-side
 
-## methods
+## `DUMB_SPEACH_TO_TEXT_transcription`
 
-- `callOpenAiTranscription(config, body, contentType?)`
-  - input: browser microphone audio upload
-  - body: `multipart/form-data`
-  - output: `{ text }`
-  - note: audio -> text
+- does: audio -> text
+- input: microphone recording from browser
+- input format: `multipart/form-data`
+- output: `{ text }`
+- prompts: none
+- pronunciation feedback: no
+- grammar correction: no
+- meaning: dumb transcription only
 
-- `callOpenAiCorrectionJson(config, request)`
-  - input: transcript text
-  - input: `systemPrompt`
-  - input: `taskPrompt`
-  - input: `userPayload`
-  - output: `{ rawText, rawResponse }`
-  - output: `providerDebug.requestBody`
-  - output: `providerDebug.responseJson`
-  - note: text -> correction JSON
+## `PURE_TEXT_TO_TEXT_CORRECTION`
 
-- `callOpenAiSpeech(config, request)`
-  - input: correction/answer text
-  - output: `{ body, contentType }`
-  - note: text -> AI voice audio stream
+- does: text -> correction JSON
+- input: transcript text
+- input: settings
+- input: recent text history
+- input: system prompt
+- input: task prompt
+- output: correction JSON text
+- hears original audio: no
+- pronunciation feedback: no
+- accent feedback: no
+- meaning: text correction only
 
-- `callOpenAiAudioTurn(config, request)`
-  - input: base64 microphone audio
-  - output: `{ model, text, audioBase64, audioFormat }`
-  - note: audio -> AI text + AI voice audio
+### system prompt
 
-- `extractResponsesText(data)`
-  - input: Responses API JSON
-  - output: text string
-  - note: provider response -> raw text
+- file: `src/server/trainerLogic.ts`
+- function: `buildSystemPrompt(settings)`
+- contains:
+  - trainer role
+  - language/topic
+  - JSON-only rule
+  - output field names
+  - allowed values
+  - correction rules
 
-## config
+### task prompt
 
-```ts
-type AiCallConfig = {
-  openAiApiKey?: string;
-};
-```
+- file: `src/server/providerModules.ts`
+- function: `correctWithOpenAI`
+- contains:
+  - correct learner text
+  - return JSON only
+  - do not decide app state
+  - do not add extra fields
+  - keep notes short
 
-## request types
+## `DUMBB_TEXT_TO_SPEACH`
 
-```ts
-type AiCorrectionRequest = {
-  model?: string;
-  systemPrompt: string;
-  taskPrompt: string;
-  userPayload: unknown;
-};
-```
+- does: text -> spoken AI audio
+- input: correction/answer text
+- output: audio stream
+- prompt: none
+- hears original audio: no
+- pronunciation feedback: no
+- meaning: dumb text-to-speech only
 
-```ts
-type AiSpeechRequest = {
-  text: string;
-  voice?: string;
-  languageName?: string;
-  style?: string;
-};
-```
+## `RAW_AUDIO_TO_AI_TEXT_AND_AUDIO`
 
-```ts
-type AiAudioTurnRequest = {
-  audioBase64: string;
-  audioFormat?: string;
-  voice?: string;
-  prompt: string;
-};
-```
+- does: audio -> AI text + AI audio
+- input: base64 microphone audio
+- output: `{ model, text, audioBase64, audioFormat }`
+- hears original audio: yes
+- pronunciation feedback: possible
+- accent feedback: possible
+- meaning: only method here that can judge spoken audio
+
+## `extractResponsesText`
+
+- does: OpenAI response JSON -> text string
+- input: raw Responses API JSON
+- output: extracted text
+- meaning: parser helper only

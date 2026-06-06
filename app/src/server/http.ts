@@ -1,5 +1,6 @@
 import type { Env } from "./bindings";
-import { callOpenAiAudioTurn, callOpenAiSpeech, callOpenAiTranscription } from "../mod_ai_calls";
+import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "../mod_ai_calls";
+import { AUDIO_ANALYSER } from "../lib_server_ai_voice";
 import { clearCostLedger, getCostLedger, listProviders, runCorrection } from "./app";
 import { json, methodNotAllowed, notFound } from "./responses";
 
@@ -40,6 +41,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       return audioTurn(request, env);
     }
 
+    if (pathname === "/api/audio-analyser") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return json(await realMethod(request, env));
+    }
+
     if (pathname.startsWith("/api/")) {
       return notFound();
     }
@@ -61,7 +67,7 @@ async function transcribeAudio(request: Request, env: Env) {
     formData.set("model", "gpt-4o-mini-transcribe");
   }
 
-  return callOpenAiTranscription({ openAiApiKey: env.OPENAI_API_KEY }, formData);
+  return DUMB_SPEACH_TO_TEXT_transcription({ openAiApiKey: env.OPENAI_API_KEY }, formData);
 }
 
 async function speakAudio(request: Request, env: Env) {
@@ -80,7 +86,7 @@ async function speakAudio(request: Request, env: Env) {
     return json({ error: "AI voice text is empty." }, 400);
   }
 
-  const result = await callOpenAiSpeech(
+  const result = await DUMBB_TEXT_TO_SPEACH(
     { openAiApiKey: env.OPENAI_API_KEY },
     {
       text,
@@ -109,6 +115,7 @@ async function audioTurn(request: Request, env: Env) {
     audioFormat?: string;
     voice?: string;
     settings?: { languageName?: string; topic?: string; keyword?: string };
+    promptConfig?: { systemTask?: string; howToRespond?: string; responseJsonFormat?: string };
   };
   const audioBase64 = String(body.audioBase64 || "");
   if (!audioBase64) {
@@ -116,15 +123,16 @@ async function audioTurn(request: Request, env: Env) {
   }
 
   const settings = body.settings || {};
+  const promptConfig = body.promptConfig || {};
   const prompt = [
-    `You are a silent-first ${settings.languageName || "French"} voice trainer.`,
+    promptConfig.systemTask || `You are a silent-first ${settings.languageName || "French"} voice trainer.`,
     `Topic: ${settings.topic || "daily conversation"}.`,
     `Keyword: ${settings.keyword || "computer"}.`,
     "Listen to the user's audio.",
-    "Return a short text message that is valid JSON with fields: text_original, text_corrected, message, hint, signal.",
-    "Also produce a short spoken correction in audio. Keep it minimal."
+    promptConfig.responseJsonFormat ? `RESPONSE JSON FORMAT: ${promptConfig.responseJsonFormat}` : "Return a short text message that is valid JSON with fields: text_original, text_corrected, message, hint, signal.",
+    promptConfig.howToRespond || "Also produce a short spoken correction in audio. Keep it minimal."
   ].join("\n");
-  return json(await callOpenAiAudioTurn(
+  return json(await RAW_AUDIO_TO_AI_TEXT_AND_AUDIO(
     { openAiApiKey: env.OPENAI_API_KEY },
     {
       audioBase64,
@@ -133,6 +141,60 @@ async function audioTurn(request: Request, env: Env) {
       prompt
     }
   ));
+}
+
+async function realMethod(request: Request, env: Env) {
+  if (!env.OPENAI_API_KEY) {
+    return { error: "AUDIO_ANALYSER is not connected." };
+  }
+
+  const body = await request.json() as {
+    audioBase64?: string;
+    audioFormat?: string;
+    textUserChat?: string;
+    history5LastTextChats?: unknown[];
+    settings?: { languageName?: string; topic?: string; keyword?: string };
+    promptConfig?: { systemTask?: string; howToRespond?: string; responseJsonFormat?: string };
+    voice?: string;
+  };
+  const settings = body.settings || {};
+  const promptConfig = body.promptConfig || {};
+  const responseJsonFormat = JSON.stringify({
+    flags: {
+      keyword_on_sent: "boolean",
+      keyword_off_sent: "boolean",
+      has_corrections: "boolean",
+      is_chat_answer_or_correction: "chat_answer | correction | none"
+    },
+    chat_text_to_user: "short answer to user",
+    text_corrected: "corrected user phrase",
+    hint: "short pronunciation/accent hint"
+  });
+
+  return AUDIO_ANALYSER(
+    {
+      provider: "openai",
+      implementation: "openai-audio",
+      openAiApiKey: env.OPENAI_API_KEY,
+      audioModel: "gpt-audio",
+      voice: body.voice || "coral"
+    },
+    {
+      provider: "openai",
+      systemPrompt: {
+        task: promptConfig.systemTask || `You are a ${settings.languageName || "French"} voice trainer. Topic: ${settings.topic || "daily conversation"}. Keyword on/off words: ${settings.keyword || "computer"} / ${settings.keyword || "computer"} off.`,
+        responseJsonFormat: promptConfig.responseJsonFormat || responseJsonFormat,
+        howToRespond: promptConfig.howToRespond || "Use original audio. Return JSON text plus short spoken audio. Keep it short."
+      },
+      textUserChat: body.textUserChat || "",
+      audioUserAudio: {
+        audioBase64: String(body.audioBase64 || ""),
+        audioFormat: body.audioFormat || "webm"
+      },
+      history5LastTextChats: body.history5LastTextChats || [],
+      voice: body.voice || "coral"
+    }
+  );
 }
 
 function normalizeBasePath(basePath = "/apps/aitutor/") {

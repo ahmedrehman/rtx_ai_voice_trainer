@@ -3,7 +3,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { createServer as createViteServer } from "vite";
-import { callOpenAiAudioTurn, callOpenAiSpeech, callOpenAiTranscription } from "./mod_ai_calls";
+import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "./mod_ai_calls";
+import { AUDIO_ANALYSER } from "./lib_server_ai_voice";
 import type { Env } from "./server/bindings";
 import { clearCostLedger, getCostLedger, listProviders, runCorrection } from "./server/app";
 import { openLocalCostDb } from "./server/localDb";
@@ -122,6 +123,11 @@ async function handleApi(request: IncomingMessage, response: ServerResponse) {
       return;
     }
 
+    if (url.pathname === "/api/audio-analyser" && request.method === "POST") {
+      sendJson(response, await realMethod(request));
+      return;
+    }
+
     sendJson(response, { error: "Not found" }, 404);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected server error";
@@ -138,7 +144,7 @@ async function transcribeAudio(request: IncomingMessage) {
   const body = await readBuffer(request);
   const contentType = request.headers["content-type"];
   try {
-    return await callOpenAiTranscription({ openAiApiKey: apiKey }, body, contentType);
+    return await DUMB_SPEACH_TO_TEXT_transcription({ openAiApiKey: apiKey }, body, contentType);
   } catch (error) {
     return { error: error instanceof Error ? error.message : "OpenAI transcription failed" };
   }
@@ -165,7 +171,7 @@ async function speakAudio(request: IncomingMessage, response: ServerResponse) {
 
   let result: { body: ReadableStream<Uint8Array> | null; contentType: string };
   try {
-    result = await callOpenAiSpeech(
+    result = await DUMBB_TEXT_TO_SPEACH(
       { openAiApiKey: apiKey },
       {
         text,
@@ -197,6 +203,7 @@ async function audioTurn(request: IncomingMessage) {
     audioFormat?: string;
     voice?: string;
     settings?: { languageName?: string; topic?: string; keyword?: string };
+    promptConfig?: { systemTask?: string; howToRespond?: string; responseJsonFormat?: string };
   };
   const audioBase64 = String(body.audioBase64 || "");
   if (!audioBase64) {
@@ -204,16 +211,17 @@ async function audioTurn(request: IncomingMessage) {
   }
 
   const settings = body.settings || {};
+  const promptConfig = body.promptConfig || {};
   const prompt = [
-    `You are a silent-first ${settings.languageName || "French"} voice trainer.`,
+    promptConfig.systemTask || `You are a silent-first ${settings.languageName || "French"} voice trainer.`,
     `Topic: ${settings.topic || "daily conversation"}.`,
     `Keyword: ${settings.keyword || "computer"}.`,
     "Listen to the user's audio.",
-    "Return a short text message that is valid JSON with fields: text_original, text_corrected, message, hint, signal.",
-    "Also produce a short spoken correction in audio. Keep it minimal."
+    promptConfig.responseJsonFormat ? `RESPONSE JSON FORMAT: ${promptConfig.responseJsonFormat}` : "Return a short text message that is valid JSON with fields: text_original, text_corrected, message, hint, signal.",
+    promptConfig.howToRespond || "Also produce a short spoken correction in audio. Keep it minimal."
   ].join("\n");
   try {
-    return await callOpenAiAudioTurn(
+    return await RAW_AUDIO_TO_AI_TEXT_AND_AUDIO(
       { openAiApiKey: apiKey },
       {
         audioBase64,
@@ -224,6 +232,65 @@ async function audioTurn(request: IncomingMessage) {
     );
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Audio AI failed" };
+  }
+}
+
+async function realMethod(request: IncomingMessage) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return { error: "AUDIO_ANALYSER is not connected." };
+  }
+
+  const body = JSON.parse((await readBuffer(request)).toString("utf8")) as {
+    audioBase64?: string;
+    audioFormat?: string;
+    textUserChat?: string;
+    history5LastTextChats?: unknown[];
+    settings?: { languageName?: string; topic?: string; keyword?: string };
+    promptConfig?: { systemTask?: string; howToRespond?: string; responseJsonFormat?: string };
+    voice?: string;
+  };
+  const settings = body.settings || {};
+  const promptConfig = body.promptConfig || {};
+  const responseJsonFormat = JSON.stringify({
+    flags: {
+      keyword_on_sent: "boolean",
+      keyword_off_sent: "boolean",
+      has_corrections: "boolean",
+      is_chat_answer_or_correction: "chat_answer | correction | none"
+    },
+    chat_text_to_user: "short answer to user",
+    text_corrected: "corrected user phrase",
+    hint: "short pronunciation/accent hint"
+  });
+
+  try {
+    return await AUDIO_ANALYSER(
+      {
+        provider: "openai",
+        implementation: "openai-audio",
+        openAiApiKey: apiKey,
+        audioModel: "gpt-audio",
+        voice: body.voice || "coral"
+      },
+      {
+        provider: "openai",
+        systemPrompt: {
+          task: promptConfig.systemTask || `You are a ${settings.languageName || "French"} voice trainer. Topic: ${settings.topic || "daily conversation"}. Keyword on/off words: ${settings.keyword || "computer"} / ${settings.keyword || "computer"} off.`,
+          responseJsonFormat: promptConfig.responseJsonFormat || responseJsonFormat,
+          howToRespond: promptConfig.howToRespond || "Use original audio. Return JSON text plus short spoken audio. Keep it short."
+        },
+        textUserChat: body.textUserChat || "",
+        audioUserAudio: {
+          audioBase64: String(body.audioBase64 || ""),
+          audioFormat: body.audioFormat || "webm"
+        },
+        history5LastTextChats: body.history5LastTextChats || [],
+        voice: body.voice || "coral"
+      }
+    );
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "AUDIO_ANALYSER failed" };
   }
 }
 

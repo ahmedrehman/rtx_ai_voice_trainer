@@ -10,6 +10,7 @@ export type AiCorrectionRequest = {
 };
 
 export type AiSpeechRequest = {
+  model?: string;
   text: string;
   voice?: string;
   languageName?: string;
@@ -17,6 +18,7 @@ export type AiSpeechRequest = {
 };
 
 export type AiAudioTurnRequest = {
+  model?: string;
   audioBase64: string;
   audioFormat?: string;
   voice?: string;
@@ -30,7 +32,7 @@ export type AiAudioTurnResult = {
   audioFormat: "wav";
 };
 
-export async function callOpenAiCorrectionJson(config: AiCallConfig, request: AiCorrectionRequest) {
+export async function PURE_TEXT_TO_TEXT_CORRECTION(config: AiCallConfig, request: AiCorrectionRequest) {
   const apiKey = requireOpenAiKey(config);
   const requestBody = {
     model: request.model || "gpt-4.1-mini",
@@ -81,7 +83,7 @@ export async function callOpenAiCorrectionJson(config: AiCallConfig, request: Ai
   };
 }
 
-export async function callOpenAiTranscription(config: AiCallConfig, body: BodyInit, contentType?: string) {
+export async function DUMB_SPEACH_TO_TEXT_transcription(config: AiCallConfig, body: BodyInit, contentType?: string) {
   const apiKey = requireOpenAiKey(config);
   const response = await fetch("https://api.openai.com/v1/audio/transcriptions", {
     method: "POST",
@@ -100,14 +102,14 @@ export async function callOpenAiTranscription(config: AiCallConfig, body: BodyIn
   return { text: data.text || "" };
 }
 
-export async function callOpenAiSpeech(config: AiCallConfig, request: AiSpeechRequest) {
+export async function DUMBB_TEXT_TO_SPEACH(config: AiCallConfig, request: AiSpeechRequest) {
   const apiKey = requireOpenAiKey(config);
   const text = request.text.trim();
   if (!text) throw new Error("AI voice text is empty.");
 
   const attempts = [
-    { model: "gpt-4o-mini-tts", withInstructions: true },
-    { model: "tts-1", withInstructions: false }
+    { model: request.model || "gpt-4o-mini-tts", withInstructions: true },
+    ...(request.model ? [] : [{ model: "tts-1", withInstructions: false }])
   ];
   let response: Response | null = null;
   let lastError = "";
@@ -143,11 +145,11 @@ export async function callOpenAiSpeech(config: AiCallConfig, request: AiSpeechRe
   };
 }
 
-export async function callOpenAiAudioTurn(config: AiCallConfig, request: AiAudioTurnRequest): Promise<AiAudioTurnResult> {
+export async function RAW_AUDIO_TO_AI_TEXT_AND_AUDIO(config: AiCallConfig, request: AiAudioTurnRequest): Promise<AiAudioTurnResult> {
   const apiKey = requireOpenAiKey(config);
   if (!request.audioBase64) throw new Error("Audio AI input is empty.");
 
-  const attempts = ["gpt-audio", "gpt-audio-1.5"];
+  const attempts = request.model ? [request.model] : ["gpt-audio", "gpt-audio-1.5"];
   let lastError = "";
 
   for (const model of attempts) {

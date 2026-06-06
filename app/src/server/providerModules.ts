@@ -1,5 +1,5 @@
 import type { CorrectionInput, ProviderId, ProviderSummary, StructuredCorrection } from "../types";
-import { callOpenAiCorrectionJson } from "../mod_ai_calls";
+import { PURE_TEXT_TO_TEXT_CORRECTION } from "../mod_ai_calls";
 import { buildSystemPrompt, demoCorrect, parseCorrection } from "./trainerLogic";
 
 export type TrainerEnv = {
@@ -97,7 +97,7 @@ async function correctWithOpenAI(input: CorrectionInput, env: TrainerEnv): Promi
   }
 
   try {
-    const result = await callOpenAiCorrectionJson(
+    const result = await PURE_TEXT_TO_TEXT_CORRECTION(
       { openAiApiKey: env.OPENAI_API_KEY },
       {
         model: "gpt-4.1-mini",
