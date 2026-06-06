@@ -119,6 +119,10 @@ p {
   gap: 14px;
 }
 
+.hidden-file-input {
+  display: none;
+}
+
 .toggle {
   display: flex;
   align-items: center;

@@ -60,6 +60,7 @@ function App() {
   const [ledger, setLedger] = useState<CostLedger>(() => loadLedger());
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioInputRef = useRef<HTMLInputElement | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const listenEnabledRef = useRef(false);
   const correctNextRef = useRef(false);
@@ -80,15 +81,6 @@ function App() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
-
-  useEffect(() => {
-    listenEnabledRef.current = listenEnabled;
-    if (listenEnabled) {
-      startListening();
-    } else {
-      stopListening();
-    }
-  }, [listenEnabled]);
 
   useEffect(() => {
     if (import.meta.env.PROD && "serviceWorker" in navigator) {
@@ -307,8 +299,44 @@ function App() {
 
     setStatus("Correct now armed: speak");
     if (!listenEnabledRef.current) {
-      setListenEnabled(true);
+      enableListening();
     }
+  }
+
+  function toggleListening(enabled: boolean) {
+    if (enabled) {
+      enableListening();
+    } else {
+      disableListening();
+    }
+  }
+
+  function enableListening() {
+    listenEnabledRef.current = true;
+    setListenEnabled(true);
+    startListening();
+  }
+
+  function disableListening() {
+    listenEnabledRef.current = false;
+    setListenEnabled(false);
+    stopListening();
+  }
+
+  function handleAudioFile(file: File | undefined) {
+    if (!file) {
+      setListenEnabled(false);
+      listenEnabledRef.current = false;
+      setStatus("No audio selected");
+      logActivity("Audio input cancelled", "No audio file was selected");
+      return;
+    }
+
+    const forced = correctNextRef.current;
+    correctNextRef.current = false;
+    setListenEnabled(false);
+    listenEnabledRef.current = false;
+    void transcribeAndSubmit(file, forced);
   }
 
   function startListening() {
@@ -360,7 +388,9 @@ function App() {
 
   async function startAudioRecording() {
     if (!recordingSupported) {
-      setStatus("Microphone recording is not available in this browser");
+      setStatus("Open audio recorder");
+      logActivity("Audio recorder fallback", "Browser requires native audio capture");
+      audioInputRef.current?.click();
       return;
     }
 
@@ -444,7 +474,7 @@ function App() {
         </div>
 
         <section className="control-panel" aria-label="Voice controls">
-          <Toggle label="Listen" enabled={listenEnabled} onChange={setListenEnabled} />
+          <Toggle label="Listen" enabled={listenEnabled} onChange={toggleListening} />
 
           <div className="button-row">
             <button className="text-action primary" onClick={correctNow}>
@@ -452,6 +482,17 @@ function App() {
               Correct now
             </button>
           </div>
+          <input
+            ref={audioInputRef}
+            type="file"
+            accept="audio/*"
+            capture
+            className="hidden-file-input"
+            onChange={(event) => {
+              handleAudioFile(event.target.files?.[0]);
+              event.currentTarget.value = "";
+            }}
+          />
           <p className="status">{status}</p>
         </section>
       </aside>
