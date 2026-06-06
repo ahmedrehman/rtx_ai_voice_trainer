@@ -121,7 +121,7 @@ async function handleApi(request: IncomingMessage, response: ServerResponse) {
 async function transcribeAudio(request: IncomingMessage) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    return { error: "OPENAI_API_KEY is not configured locally." };
+    return { error: "Audio transcription is not connected." };
   }
 
   const body = await readBuffer(request);

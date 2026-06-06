@@ -49,7 +49,7 @@ export const providerModules: Record<ProviderId, ProviderModule> = {
     },
     correct: async (input, env) => {
       if (!env.DEEPGRAM_API_KEY || !env.ELEVENLABS_API_KEY) {
-        return notConfigured(input, "Deepgram + ElevenLabs", ["DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY"]);
+        return notConfigured(input, "Deepgram + ElevenLabs");
       }
       return demoCorrect(input);
     }
@@ -65,7 +65,7 @@ export const providerModules: Record<ProviderId, ProviderModule> = {
     },
     correct: async (input, env) => {
       if (!env.AZURE_SPEECH_KEY || !env.AZURE_SPEECH_REGION) {
-        return notConfigured(input, "Azure Speech", ["AZURE_SPEECH_KEY", "AZURE_SPEECH_REGION"]);
+        return notConfigured(input, "Azure Speech");
       }
       return demoCorrect(input);
     }
@@ -81,7 +81,7 @@ export const providerModules: Record<ProviderId, ProviderModule> = {
     },
     correct: async (input, env) => {
       if (!env.GOOGLE_CLOUD_API_KEY) {
-        return notConfigured(input, "Google Cloud", ["GOOGLE_CLOUD_API_KEY"]);
+        return notConfigured(input, "Google Cloud");
       }
       return demoCorrect(input);
     }
@@ -92,7 +92,7 @@ export const providerSummaries = Object.values(providerModules).map((provider) =
 
 async function correctWithOpenAI(input: CorrectionInput, env: TrainerEnv): Promise<StructuredCorrection> {
   if (!env.OPENAI_API_KEY) {
-    return notConfigured(input, "OpenAI", ["OPENAI_API_KEY"]);
+    return notConfigured(input, "OpenAI");
   }
 
   const response = await fetch("https://api.openai.com/v1/responses", {
@@ -119,15 +119,14 @@ async function correctWithOpenAI(input: CorrectionInput, env: TrainerEnv): Promi
   return parseCorrection(data.output_text || "", input);
 }
 
-function notConfigured(input: CorrectionInput, providerName: string, secrets: string[]): StructuredCorrection {
+function notConfigured(input: CorrectionInput, providerName: string): StructuredCorrection {
   const base = demoCorrect(input);
   return {
     ...base,
     shouldRespond: true,
     trigger: input.forced ? "button" : input.manualText ? "manual-text" : base.trigger,
     notes: [
-      `${providerName} is selected, but server secrets are not configured: ${secrets.join(", ")}.`,
-      "The key names are not exposed to the browser and must be configured on the server."
+      `${providerName} is not connected.`
     ],
     visualFeedback: "error"
   };

@@ -42,7 +42,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
 
 async function transcribeAudio(request: Request, env: Env) {
   if (!env.OPENAI_API_KEY) {
-    return { error: "OPENAI_API_KEY is not configured on the Worker." };
+    return { error: "Audio transcription is not connected." };
   }
 
   const formData = await request.formData();

@@ -19,6 +19,7 @@ declare global {
   interface Window {
     SpeechRecognition?: SpeechRecognitionConstructor;
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    webkitAudioContext?: typeof AudioContext;
   }
 
   interface BeforeInstallPromptEvent extends Event {
@@ -43,6 +44,47 @@ function createId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function encodeWav(chunks: Float32Array[], sampleRate: number) {
+  const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const data = new Float32Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    data.set(chunk, offset);
+    offset += chunk.length;
+  }
+
+  const buffer = new ArrayBuffer(44 + data.length * 2);
+  const view = new DataView(buffer);
+  writeString(view, 0, "RIFF");
+  view.setUint32(4, 36 + data.length * 2, true);
+  writeString(view, 8, "WAVE");
+  writeString(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeString(view, 36, "data");
+  view.setUint32(40, data.length * 2, true);
+
+  let dataOffset = 44;
+  for (const sample of data) {
+    const clamped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(dataOffset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+    dataOffset += 2;
+  }
+
+  return new Blob([view], { type: "audio/wav" });
+}
+
+function writeString(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
+}
+
 function App() {
   const [tab, setTab] = useState<Tab>("chat");
   const [providerId, setProviderId] = useState<ProviderId>("openai");
@@ -60,6 +102,11 @@ function App() {
   const [ledger, setLedger] = useState<CostLedger>(() => loadLedger());
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+  const audioProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const pcmChunksRef = useRef<Float32Array[]>([]);
+  const wavForcedRef = useRef(false);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const listenEnabledRef = useRef(false);
@@ -67,7 +114,8 @@ function App() {
 
   const provider = providerSummaries.find((item) => item.id === providerId) ?? providerSummaries[0];
   const speechSupported = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
-  const recordingSupported = typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia) && typeof MediaRecorder !== "undefined";
+  const microphoneSupported = typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
+  const recordingSupported = microphoneSupported && typeof MediaRecorder !== "undefined";
   const recentContext = useMemo(() => messages.slice(-5), [messages]);
 
   useEffect(() => {
@@ -125,7 +173,7 @@ function App() {
 
   async function installApp() {
     if (!installPrompt) {
-      setStatus("Use browser menu to install app");
+      setStatus("Use the install option in this device menu");
       return;
     }
 
@@ -297,6 +345,12 @@ function App() {
       return;
     }
 
+    if (audioContextRef.current) {
+      setStatus("Correcting recorded speech");
+      stopWavRecording();
+      return;
+    }
+
     setStatus("Correct now armed: speak");
     if (!listenEnabledRef.current) {
       enableListening();
@@ -340,7 +394,7 @@ function App() {
   }
 
   function startListening() {
-    logActivity("Listen enabled", speechSupported ? "Using browser speech recognition" : "Using microphone recording fallback");
+    logActivity("Listen enabled", speechSupported ? "Using live speech capture" : "Using audio capture fallback");
     if (!speechSupported) {
       void startAudioRecording();
       return;
@@ -387,10 +441,15 @@ function App() {
   }
 
   async function startAudioRecording() {
-    if (!recordingSupported) {
+    if (!microphoneSupported) {
       setStatus("Open audio recorder");
-      logActivity("Audio recorder fallback", "Browser requires native audio capture");
+      logActivity("Audio recorder fallback", "This device requires native audio capture");
       audioInputRef.current?.click();
+      return;
+    }
+
+    if (!recordingSupported) {
+      await startWavRecording();
       return;
     }
 
@@ -434,9 +493,82 @@ function App() {
     }
   }
 
+  async function startWavRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) {
+        setStatus("Open audio recorder");
+        logActivity("Audio recorder fallback", "This device requires native audio capture");
+        audioInputRef.current?.click();
+        return;
+      }
+
+      const context = new AudioContextClass();
+      const source = context.createMediaStreamSource(stream);
+      const processor = context.createScriptProcessor(4096, 1, 1);
+      pcmChunksRef.current = [];
+      wavForcedRef.current = correctNextRef.current;
+
+      processor.onaudioprocess = (event) => {
+        pcmChunksRef.current.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+      };
+
+      source.connect(processor);
+      processor.connect(context.destination);
+      audioContextRef.current = context;
+      audioStreamRef.current = stream;
+      audioProcessorRef.current = processor;
+      setListening(true);
+      setStatus("Recording");
+      logActivity("Recording started", "Microphone permission granted");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Microphone permission failed";
+      setListenEnabled(false);
+      setListening(false);
+      setStatus(message);
+      logActivity("Microphone error", message);
+    }
+  }
+
+  function stopWavRecording() {
+    const context = audioContextRef.current;
+    const processor = audioProcessorRef.current;
+    const stream = audioStreamRef.current;
+    const chunks = pcmChunksRef.current;
+    const forced = wavForcedRef.current || correctNextRef.current;
+
+    processor?.disconnect();
+    stream?.getTracks().forEach((track) => track.stop());
+    void context?.close();
+
+    audioContextRef.current = null;
+    audioProcessorRef.current = null;
+    audioStreamRef.current = null;
+    pcmChunksRef.current = [];
+    wavForcedRef.current = false;
+    correctNextRef.current = false;
+    setListening(false);
+    setListenEnabled(false);
+
+    if (!chunks.length) {
+      setStatus("No speech heard");
+      logActivity("No speech heard", "No audio was recorded");
+      return;
+    }
+
+    const sampleRate = context?.sampleRate || 44100;
+    const wav = encodeWav(chunks, sampleRate);
+    void transcribeAndSubmit(wav, forced);
+  }
+
   function stopListening() {
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.stop();
+      return;
+    }
+    if (audioContextRef.current) {
+      stopWavRecording();
       return;
     }
     recognitionRef.current?.stop();
@@ -714,14 +846,14 @@ function SettingsTab({
           {installed
             ? "AI Trainer is installed on this device."
             : installReady
-              ? "Install is ready for this browser."
-              : "On iPhone, use Share, then Add to Home Screen. On Android, use the browser menu if the button is not active."}
+              ? "Install is ready on this device."
+              : "On iPhone, use Share, then Add to Home Screen. On Android, use the menu if the button is not active."}
         </p>
       </section>
 
       <section className="info-section">
         <h2>Microphone</h2>
-        <p className="browser-support">{speechSupported ? "Browser speech recognition is available." : "Browser speech recognition is not available here."}</p>
+        <p className="browser-support">{speechSupported ? "Live speech capture is available." : "Live speech capture is not available; audio capture fallback will be used."}</p>
       </section>
     </div>
   );
