@@ -4,11 +4,16 @@ export type Tab = "chat" | "settings" | "debug";
 
 export type Trigger = "keyword" | "button" | "manual-text" | "silent";
 
+import type { VoiceImplementation } from "./voiceTrainer";
+
+export type { VoiceImplementation };
+
 export type AppSettings = {
   languageName: string;
   recognitionLang: string;
   topic: string;
   keyword: string;
+  voiceImplementation: VoiceImplementation;
 };
 
 export type StructuredCorrection = {

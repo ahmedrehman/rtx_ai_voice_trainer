@@ -8,11 +8,16 @@ import {
   Mic,
   MicOff,
   MessageSquareText,
+  Play,
   Settings2,
+  Volume2,
+  Square,
 } from "lucide-react";
 import { defaultLedger, providerSummaries } from "./clientConfig";
 import { clearLedger, loadLedger, loadSettings, saveLedger, saveSettings } from "./storage";
 import type { AppSettings, ChatMessage, CorrectionInput, CorrectionResult, CostBucket, CostLedger, DebugEvent, ProviderId, SpeechRecognitionConstructor, SpeechRecognitionEventLike, SpeechRecognitionLike, Tab } from "./types";
+import type { VoiceImplementation } from "./types";
+import { base64ToAudioBlob, blobToBase64, voiceImplementationLabel, voiceImplementationOptions } from "./voiceTrainer";
 import "./styles.css";
 
 declare global {
@@ -94,7 +99,9 @@ function App() {
   const [activityEvents, setActivityEvents] = useState<Array<{ id: string; createdAt: string; label: string; detail: string }>>([]);
   const [draft, setDraft] = useState("");
   const [listenEnabled, setListenEnabled] = useState(false);
+  const [speakEnabled, setSpeakEnabled] = useState(false);
   const [listening, setListening] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const [status, setStatus] = useState("Ready");
   const [latestSignal, setLatestSignal] = useState<"none" | "improvement" | "error">("none");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -109,11 +116,15 @@ function App() {
   const wavForcedRef = useRef(false);
   const audioInputRef = useRef<HTMLInputElement | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const playbackRef = useRef<HTMLAudioElement | null>(null);
+  const playbackUrlRef = useRef<string | null>(null);
   const listenEnabledRef = useRef(false);
+  const speakEnabledRef = useRef(false);
   const correctNextRef = useRef(false);
 
   const provider = providerSummaries.find((item) => item.id === providerId) ?? providerSummaries[0];
   const speechSupported = typeof window !== "undefined" && Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+  const browserSpeechSupported = typeof window !== "undefined" && "speechSynthesis" in window && typeof SpeechSynthesisUtterance !== "undefined";
   const microphoneSupported = typeof navigator !== "undefined" && Boolean(navigator.mediaDevices?.getUserMedia);
   const recordingSupported = microphoneSupported && typeof MediaRecorder !== "undefined";
   const recentContext = useMemo(() => messages.slice(-5), [messages]);
@@ -129,6 +140,24 @@ function App() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    const onError = (event: ErrorEvent) => {
+      logActivity("Browser error", event.message || "Unknown browser error");
+    };
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason instanceof Error ? event.reason.message : String(event.reason || "Unknown promise rejection");
+      logActivity("Promise error", reason);
+    };
+
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onUnhandledRejection);
+    logActivity("Browser capabilities", browserCapabilitySummary());
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onUnhandledRejection);
+    };
+  }, []);
 
   useEffect(() => {
     if (import.meta.env.PROD && "serviceWorker" in navigator) {
@@ -169,6 +198,318 @@ function App() {
       { id: createId(), createdAt: new Date().toISOString(), label, detail },
       ...current
     ].slice(0, 30));
+  }
+
+  function browserCapabilitySummary() {
+    return [
+      `SpeechRecognition=${speechSupported ? "yes" : "no"}`,
+      `BrowserDummySpeech=${browserSpeechSupported ? "yes" : "no"}`,
+      `getUserMedia=${microphoneSupported ? "yes" : "no"}`,
+      `MediaRecorder=${recordingSupported ? "yes" : "no"}`,
+      `secureContext=${window.isSecureContext ? "yes" : "no"}`
+    ].join(", ");
+  }
+
+  function toggleSpeak(enabled: boolean) {
+    speakEnabledRef.current = enabled;
+    setSpeakEnabled(enabled);
+    logActivity(enabled ? "Speak enabled" : "Speak disabled", enabled ? "AI voice may play for explicit answers" : "AI voice output disabled");
+    if (!enabled) {
+      stopPlayback();
+    }
+  }
+
+  async function speakWithProvider(text: string, reason: string, force = false) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (!force && !speakEnabledRef.current) {
+      logActivity("Speech skipped", "SPEAK is off");
+      return;
+    }
+
+    try {
+      stopPlayback();
+      setSpeaking(true);
+      setStatus("Generating voice");
+      logActivity("AI voice request", reason);
+
+      const response = await fetch(apiUrl("/api/speak"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerId,
+          text: trimmed,
+          voice: "coral",
+          languageName: settings.languageName,
+          style: "short correction, calm teacher"
+        })
+      });
+
+      if (!response.ok) {
+        const detail = await responseErrorMessage(response);
+        throw new Error(detail || `AI voice failed with HTTP ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      if (!blob.size) {
+        throw new Error("AI voice returned empty audio");
+      }
+
+      const url = URL.createObjectURL(blob);
+      playbackUrlRef.current = url;
+      const audio = new Audio(url);
+      playbackRef.current = audio;
+      audio.onplay = () => {
+        setStatus("Playing AI voice");
+        logActivity("AI voice playing", `${Math.round(blob.size / 1024)} KB audio`);
+      };
+      audio.onended = () => {
+        setSpeaking(false);
+        setStatus("Ready");
+        logActivity("AI voice ended", reason);
+        cleanupPlaybackUrl();
+      };
+      audio.onerror = () => {
+        setSpeaking(false);
+        const message = "Audio playback failed";
+        setStatus(message);
+        logActivity("Audio playback error", message);
+        cleanupPlaybackUrl();
+      };
+      await audio.play();
+    } catch (error) {
+      setSpeaking(false);
+      const message = error instanceof Error ? error.message : "AI voice failed";
+      setStatus(message);
+      logActivity("AI voice error", message);
+    }
+  }
+
+  async function responseErrorMessage(response: Response) {
+    const text = await response.text().catch(() => "");
+    if (!text) return "";
+    try {
+      const parsed = JSON.parse(text) as { error?: unknown };
+      if (typeof parsed.error === "string") return parsed.error;
+      if (parsed.error && typeof parsed.error === "object" && "message" in parsed.error) {
+        return String((parsed.error as { message?: unknown }).message || text);
+      }
+    } catch {
+      return text;
+    }
+    return text;
+  }
+
+  function dummySpeak(text: string) {
+    const trimmed = text.trim() || "Bonjour. Ceci est un test de voix.";
+    if (!browserSpeechSupported) {
+      const message = "Dummy speak is not supported in this browser";
+      setStatus(message);
+      logActivity("Dummy speak error", message);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(trimmed);
+    utterance.lang = settings.recognitionLang || "fr-FR";
+    utterance.rate = 0.95;
+    utterance.onstart = () => {
+      setSpeaking(true);
+      setStatus("Dummy speaking");
+      logActivity("Dummy speak started", "Browser speech synthesis");
+    };
+    utterance.onend = () => {
+      setSpeaking(false);
+      setStatus("Ready");
+      logActivity("Dummy speak ended", "Browser speech synthesis");
+    };
+    utterance.onerror = (event) => {
+      setSpeaking(false);
+      const message = `Dummy speak failed: ${event.error}`;
+      setStatus(message);
+      logActivity("Dummy speak error", message);
+    };
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function testSpeak() {
+    if (settings.voiceImplementation === "dummy") {
+      dummySpeak("Bonjour. Ceci est un test de voix.");
+      return;
+    }
+    if (settings.voiceImplementation === "audio-ai") {
+      void testAudioAiTurn();
+      return;
+    }
+    void speakWithProvider("Bonjour. Ceci est un test de voix IA.", "Manual AI voice test", true);
+  }
+
+  async function testAudioAiTurn() {
+    if (!microphoneSupported) {
+      const message = "Microphone API is not available";
+      setStatus(message);
+      logActivity("Audio AI error", message);
+      return;
+    }
+
+    try {
+      stopPlayback();
+      setStatus("Recording audio AI test");
+      logActivity("Audio AI record", "Recording 4 seconds of raw audio");
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) {
+        stream.getTracks().forEach((track) => track.stop());
+        const message = "AudioContext is not available";
+        setStatus(message);
+        logActivity("Audio AI error", message);
+        return;
+      }
+
+      const context = new AudioContextClass();
+      const source = context.createMediaStreamSource(stream);
+      const processor = context.createScriptProcessor(4096, 1, 1);
+      const chunks: Float32Array[] = [];
+
+      processor.onaudioprocess = (event) => {
+        chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+      };
+
+      source.connect(processor);
+      processor.connect(context.destination);
+      setListening(true);
+
+      window.setTimeout(() => {
+        processor.disconnect();
+        stream.getTracks().forEach((track) => track.stop());
+        const sampleRate = context.sampleRate || 44100;
+        void context.close();
+        setListening(false);
+
+        if (!chunks.length) {
+          const message = "No audio was recorded for audio AI test";
+          setStatus(message);
+          logActivity("Audio AI error", message);
+          return;
+        }
+
+        const wav = encodeWav(chunks, sampleRate);
+        void runAudioAiTurn(wav);
+      }, 4000);
+    } catch (error) {
+      setListening(false);
+      const message = error instanceof Error ? error.message : "Audio AI recording failed";
+      setStatus(message);
+      logActivity("Audio AI error", message);
+    }
+  }
+
+  async function runAudioAiTurn(blob: Blob) {
+    try {
+      setStatus("Sending audio to AI");
+      logActivity("Audio AI request", `${Math.round(blob.size / 1024)} KB wav`);
+      const audioBase64 = await blobToBase64(blob);
+      const response = await fetch(apiUrl("/api/audio-turn"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerId,
+          audioBase64,
+          audioFormat: "wav",
+          voice: "coral",
+          settings
+        })
+      });
+
+      if (!response.ok) {
+        const detail = await responseErrorMessage(response);
+        throw new Error(detail || `Audio AI failed with HTTP ${response.status}`);
+      }
+
+      const result = await response.json() as {
+        text?: string;
+        audioBase64?: string;
+        audioFormat?: string;
+        model?: string;
+      };
+      logActivity("Audio AI text", result.text || "No text returned");
+      if (result.audioBase64) {
+        await playBase64Audio(result.audioBase64, result.audioFormat || "wav", `audio-ai ${result.model || ""}`.trim());
+      } else {
+        setStatus("Audio AI returned no audio");
+        logActivity("Audio AI error", "No audio returned by model");
+      }
+    } catch (error) {
+      setSpeaking(false);
+      const message = error instanceof Error ? error.message : "Audio AI failed";
+      setStatus(message);
+      logActivity("Audio AI error", message);
+    }
+  }
+
+  async function playBase64Audio(audioBase64: string, format: string, reason: string) {
+    stopPlayback();
+    setSpeaking(true);
+    const blob = base64ToAudioBlob(audioBase64, format);
+    const url = URL.createObjectURL(blob);
+    playbackUrlRef.current = url;
+    const audio = new Audio(url);
+    playbackRef.current = audio;
+    audio.onplay = () => {
+      setStatus("Playing AI audio turn");
+      logActivity("Audio AI playing", `${Math.round(blob.size / 1024)} KB ${format}`);
+    };
+    audio.onended = () => {
+      setSpeaking(false);
+      setStatus("Ready");
+      logActivity("Audio AI ended", reason);
+      cleanupPlaybackUrl();
+    };
+    audio.onerror = () => {
+      setSpeaking(false);
+      const message = "Audio AI playback failed";
+      setStatus(message);
+      logActivity("Audio AI playback error", message);
+      cleanupPlaybackUrl();
+    };
+    await audio.play();
+  }
+
+  function testListen() {
+    logActivity("Test listen", "Starting listen test");
+    correctNextRef.current = true;
+    enableListening();
+    window.setTimeout(() => {
+      if (listenEnabledRef.current || mediaRecorderRef.current?.state === "recording" || audioContextRef.current) {
+        logActivity("Test listen", "Auto-stopping listen test");
+        disableListening();
+      }
+    }, 5000);
+  }
+
+  function stopPlayback() {
+    playbackRef.current?.pause();
+    playbackRef.current = null;
+    cleanupPlaybackUrl();
+    if (browserSpeechSupported) window.speechSynthesis.cancel();
+    setSpeaking(false);
+  }
+
+  function cleanupPlaybackUrl() {
+    if (playbackUrlRef.current) {
+      URL.revokeObjectURL(playbackUrlRef.current);
+      playbackUrlRef.current = null;
+    }
+  }
+
+  function stopAll() {
+    listenEnabledRef.current = false;
+    setListenEnabled(false);
+    stopListening();
+    stopPlayback();
+    setStatus("Stopped");
+    logActivity("Stop", "Stopped listening and audio playback");
   }
 
   async function installApp() {
@@ -212,7 +553,7 @@ function App() {
 
   async function transcribeAudio(blob: Blob) {
     const formData = new FormData();
-    const extension = blob.type.includes("mp4") ? "mp4" : "webm";
+    const extension = blob.type.includes("wav") ? "wav" : blob.type.includes("mp4") ? "mp4" : "webm";
     formData.append("file", blob, `speech.${extension}`);
     formData.append("model", "gpt-4o-mini-transcribe");
 
@@ -222,7 +563,8 @@ function App() {
     });
 
     if (!response.ok) {
-      throw new Error("Audio transcription failed");
+      const detail = await response.text().catch(() => "");
+      throw new Error(detail || `Audio transcription failed with HTTP ${response.status}`);
     }
 
     const data = await response.json() as { text?: string; error?: string };
@@ -268,24 +610,33 @@ function App() {
       forced: Boolean(options.forced),
       manualText: Boolean(options.manualText),
       speechInput: Boolean(options.speechInput),
-      voiceOutput: false,
+      voiceOutput: speakEnabledRef.current,
       history: recentContext,
       settings
     };
 
-    const response = await fetch(apiUrl("/api/correct"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request)
-    });
+    let result: CorrectionResult;
+    try {
+      setStatus("Correcting");
+      const response = await fetch(apiUrl("/api/correct"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request)
+      });
 
-    if (!response.ok) {
-      setStatus("Server correction failed");
-      logActivity("Correction error", `HTTP ${response.status}`);
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(detail || `Server correction failed with HTTP ${response.status}`);
+      }
+
+      result = await response.json() as CorrectionResult;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Server correction failed";
+      setStatus(message);
+      logActivity("Correction error", message);
       return;
     }
 
-    const result = await response.json() as CorrectionResult;
     const correction = result.correction;
     setLatestSignal(correction.visualFeedback);
     logActivity("Correction result", `correctionSignal=${correction.visualFeedback}`);
@@ -302,16 +653,24 @@ function App() {
     };
 
     if (correction.shouldRespond) {
+      const willSpeak = speakEnabledRef.current && Boolean(result.spokenText || result.trainerText);
       nextMessages.push({
         id: createId(),
         speaker: "trainer",
         text: result.trainerText,
         correction,
-        spoken: false,
+        spoken: willSpeak,
         createdAt: new Date().toISOString()
       });
       recordCost(result.cost);
       setStatus(correction.trigger === "keyword" ? "Answered by keyword" : "Answered by request");
+      if (willSpeak) {
+        if (settings.voiceImplementation === "dummy") {
+          dummySpeak(result.spokenText || result.trainerText);
+        } else {
+          void speakWithProvider(result.spokenText || result.trainerText, `${voiceImplementationLabel(settings.voiceImplementation)} trigger=${correction.trigger}`);
+        }
+      }
     } else {
       nextMessages.push({
         id: createId(),
@@ -607,11 +966,16 @@ function App() {
 
         <section className="control-panel" aria-label="Voice controls">
           <Toggle label="Listen" enabled={listenEnabled} onChange={toggleListening} />
+          <Toggle label="Speak" enabled={speakEnabled} onChange={toggleSpeak} />
 
           <div className="button-row">
             <button className="text-action primary" onClick={correctNow}>
               <Check size={18} />
               Correct now
+            </button>
+            <button className="text-action" onClick={testSpeak}>
+              <Play size={18} />
+              Test voice
             </button>
           </div>
           <input
@@ -636,11 +1000,17 @@ function App() {
             keyword={settings.keyword}
             latestSignal={latestSignal}
             listening={listening}
+            speaking={speaking}
             messages={messages}
             setDraft={setDraft}
             settings={settings}
             correctNow={correctNow}
             submitUtterance={submitUtterance}
+            speakEnabled={speakEnabled}
+            toggleListening={toggleListening}
+            toggleSpeak={toggleSpeak}
+            testSpeak={testSpeak}
+            stopAll={stopAll}
           />
         )}
 
@@ -651,6 +1021,9 @@ function App() {
             settings={settings}
             updateSettings={updateSettings}
             speechSupported={speechSupported}
+            browserSpeechSupported={browserSpeechSupported}
+            microphoneSupported={microphoneSupported}
+            recordingSupported={recordingSupported}
             installApp={installApp}
             installReady={Boolean(installPrompt)}
             installed={installed}
@@ -661,6 +1034,24 @@ function App() {
           <DebugTab
             events={debugEvents}
             activityEvents={activityEvents}
+            listenEnabled={listenEnabled}
+            listening={listening}
+            speakEnabled={speakEnabled}
+            speaking={speaking}
+            status={status}
+            voiceImplementation={settings.voiceImplementation}
+            draft={draft}
+            setDraft={setDraft}
+            correctNow={correctNow}
+            submitUtterance={submitUtterance}
+            toggleListening={toggleListening}
+            toggleSpeak={toggleSpeak}
+            testSpeak={testSpeak}
+            testAudioAiTurn={testAudioAiTurn}
+            testListen={testListen}
+            dummySpeak={() => dummySpeak(draft)}
+            stopAll={stopAll}
+            capabilitySummary={browserCapabilitySummary()}
             clearEvents={() => {
               setDebugEvents([]);
               setActivityEvents([]);
@@ -681,21 +1072,30 @@ function ChatTab({
   keyword,
   latestSignal,
   listening,
+  speaking,
   messages,
   setDraft,
   settings,
   correctNow,
-  submitUtterance
+  submitUtterance,
+  speakEnabled,
+  stopAll
 }: {
   draft: string;
   keyword: string;
   latestSignal: "none" | "improvement" | "error";
   listening: boolean;
+  speaking: boolean;
   messages: ChatMessage[];
   setDraft: (value: string) => void;
   settings: AppSettings;
   correctNow: () => void;
   submitUtterance: (text: string, options?: { forced?: boolean; manualText?: boolean; speechInput?: boolean }) => Promise<void>;
+  speakEnabled: boolean;
+  toggleListening: (enabled: boolean) => void;
+  toggleSpeak: (enabled: boolean) => void;
+  testSpeak: () => void;
+  stopAll: () => void;
 }) {
   return (
     <>
@@ -704,9 +1104,15 @@ function ChatTab({
           <h2>Chat</h2>
           <p>Listen captures speech. Correct now asks the AI for a correction.</p>
         </div>
-        <div className={`listen-indicator ${listening ? "on" : ""}`}>
-          {listening ? <Mic size={16} /> : <MicOff size={16} />}
-          {listening ? "Listening" : "Idle"}
+        <div className="header-status">
+          <div className={`listen-indicator ${listening ? "on" : ""}`}>
+            {listening ? <Mic size={16} /> : <MicOff size={16} />}
+            {listening ? "Listening" : "Idle"}
+          </div>
+          <div className={`listen-indicator ${speaking ? "on" : ""}`}>
+            <Volume2 size={16} />
+            {speaking ? "AI voice" : speakEnabled ? "Speak on" : "Speak off"}
+          </div>
         </div>
       </div>
 
@@ -747,6 +1153,10 @@ function ChatTab({
         <button type="button" onClick={correctNow}>
           <Check size={17} />
           Correct now
+        </button>
+        <button type="button" onClick={stopAll}>
+          <Square size={17} />
+          Stop
         </button>
       </form>
     </>
@@ -791,6 +1201,9 @@ function SettingsTab({
   settings,
   updateSettings,
   speechSupported,
+  browserSpeechSupported,
+  microphoneSupported,
+  recordingSupported,
   installApp,
   installReady,
   installed
@@ -800,6 +1213,9 @@ function SettingsTab({
   settings: AppSettings;
   updateSettings: (settings: Partial<AppSettings>) => void;
   speechSupported: boolean;
+  browserSpeechSupported: boolean;
+  microphoneSupported: boolean;
+  recordingSupported: boolean;
   installApp: () => void;
   installReady: boolean;
   installed: boolean;
@@ -835,6 +1251,17 @@ function SettingsTab({
           <span>Answer keyword</span>
           <input value={settings.keyword} onChange={(event) => updateSettings({ keyword: event.target.value })} />
         </label>
+        <label className="field">
+          <span>Voice implementation</span>
+          <select value={settings.voiceImplementation} onChange={(event) => updateSettings({ voiceImplementation: event.target.value as VoiceImplementation })}>
+            {voiceImplementationOptions.map((option) => (
+              <option key={option.id} value={option.id}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <p className="provider-note">
+          {voiceImplementationOptions.find((option) => option.id === settings.voiceImplementation)?.description}
+        </p>
       </section>
 
       <section className="info-section">
@@ -854,6 +1281,11 @@ function SettingsTab({
       <section className="info-section">
         <h2>Microphone</h2>
         <p className="browser-support">{speechSupported ? "Live speech capture is available." : "Live speech capture is not available; audio capture fallback will be used."}</p>
+        <div className="decision-grid">
+          <span>microphone: {microphoneSupported ? "yes" : "no"}</span>
+          <span>media recorder: {recordingSupported ? "yes" : "no"}</span>
+          <span>dummy speak: {browserSpeechSupported ? "yes" : "no"}</span>
+        </div>
       </section>
     </div>
   );
@@ -862,6 +1294,24 @@ function SettingsTab({
 function DebugTab({
   events,
   activityEvents,
+  listenEnabled,
+  listening,
+  speakEnabled,
+  speaking,
+  status,
+  voiceImplementation,
+  draft,
+  setDraft,
+  correctNow,
+  submitUtterance,
+  toggleListening,
+  toggleSpeak,
+  testSpeak,
+  testAudioAiTurn,
+  testListen,
+  dummySpeak,
+  stopAll,
+  capabilitySummary,
   clearEvents,
   ledger,
   providerId,
@@ -870,6 +1320,24 @@ function DebugTab({
 }: {
   events: DebugEvent[];
   activityEvents: Array<{ id: string; createdAt: string; label: string; detail: string }>;
+  listenEnabled: boolean;
+  listening: boolean;
+  speakEnabled: boolean;
+  speaking: boolean;
+  status: string;
+  voiceImplementation: VoiceImplementation;
+  draft: string;
+  setDraft: (value: string) => void;
+  correctNow: () => void;
+  submitUtterance: (text: string, options?: { forced?: boolean; manualText?: boolean; speechInput?: boolean }) => Promise<void>;
+  toggleListening: (enabled: boolean) => void;
+  toggleSpeak: (enabled: boolean) => void;
+  testSpeak: () => void;
+  testAudioAiTurn: () => void;
+  testListen: () => void;
+  dummySpeak: () => void;
+  stopAll: () => void;
+  capabilitySummary: string;
   clearEvents: () => void;
   ledger: CostLedger;
   providerId: ProviderId;
@@ -887,13 +1355,66 @@ function DebugTab({
       </div>
 
       <section className="info-section">
-        <h2>Current Signal</h2>
+        <h2>Test Controls</h2>
+        <div className="debug-control-grid">
+          <Toggle label="LISTEN" enabled={listenEnabled} onChange={toggleListening} />
+          <Toggle label="SPEAK" enabled={speakEnabled} onChange={toggleSpeak} />
+          <button className="text-action primary" onClick={correctNow}>
+            <Check size={18} />
+            SEND
+          </button>
+          <button className="text-action" onClick={testListen}>
+            <Mic size={18} />
+            TEST LISTEN
+          </button>
+          <button className="text-action" onClick={testSpeak}>
+            <Volume2 size={18} />
+            TEST CHAINED VOICE
+          </button>
+          <button className="text-action" onClick={testAudioAiTurn}>
+            <Volume2 size={18} />
+            TEST AUDIO AI
+          </button>
+          <button className="text-action" onClick={dummySpeak}>
+            <Play size={18} />
+            DUMMY SPEAK
+          </button>
+          <button className="text-action" onClick={stopAll}>
+            <Square size={18} />
+            STOP
+          </button>
+        </div>
+        <form
+          className="debug-composer"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submitUtterance(draft, { forced: true, manualText: true });
+          }}
+        >
+          <input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Type a test sentence" />
+          <button className="text-action primary" type="submit">SEND TEXT</button>
+        </form>
+      </section>
+
+      <section className="info-section">
+        <h2>Status</h2>
         <div className="decision-grid">
+          <span>status: {status}</span>
           <span>provider: {providerId}</span>
+          <span>voice_mode: {voiceImplementationLabel(voiceImplementation)}</span>
+          <span>listen_enabled: {String(listenEnabled)}</span>
+          <span>speak_enabled: {String(speakEnabled)}</span>
+          <span>is_listening: {String(listening)}</span>
+          <span>is_playing_voice: {String(speaking)}</span>
           <span>correctionSignal: {events[0]?.response.visualFeedback || "none"}</span>
           <span>hasCorrection: {String(Boolean(events[0] && events[0].response.visualFeedback !== "none"))}</span>
           <span>importantError: {String(events[0]?.response.visualFeedback === "error")}</span>
         </div>
+      </section>
+
+      <section className="info-section">
+        <h2>Browser</h2>
+        <pre>{capabilitySummary}</pre>
       </section>
 
       <section className="info-section">
@@ -902,7 +1423,7 @@ function DebugTab({
           <p>No activity yet. Tap Listen or Correct now.</p>
         ) : (
           <div className="debug-events">
-            {activityEvents.map((event) => (
+            {activityEvents.slice(0, 20).map((event) => (
               <div className="activity-event" key={event.id}>
                 <strong>{event.label}</strong>
                 <span>{new Date(event.createdAt).toLocaleTimeString()}</span>

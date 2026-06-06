@@ -12,7 +12,8 @@ export const defaultSettings: AppSettings = {
   languageName: "French",
   recognitionLang: "fr-FR",
   topic: "daily conversation",
-  keyword: "computer"
+  keyword: "computer",
+  voiceImplementation: "chained"
 };
 
 export const defaultLedger: Record<ProviderId, CostBucket> = {

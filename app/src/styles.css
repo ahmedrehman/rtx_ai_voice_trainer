@@ -218,6 +218,13 @@ p {
   background: #eaffec;
 }
 
+.header-status {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .signal-banner {
   display: flex;
   align-items: center;
@@ -506,6 +513,38 @@ th {
   gap: 18px;
 }
 
+.debug-control-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.debug-control-grid .toggle {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #d3ccbe;
+  border-radius: 8px;
+  background: #f8fbf8;
+}
+
+.debug-composer {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.debug-composer input {
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid #d3ccbe;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #fffdf8;
+  color: #182019;
+}
+
 .debug-events {
   display: grid;
   gap: 14px;
@@ -690,13 +729,18 @@ summary {
 
   .composer,
   .info-grid,
-  .settings-grid {
+  .settings-grid,
+  .debug-composer {
     grid-template-columns: 1fr;
   }
 
   .listen-indicator {
     width: 100%;
     min-height: 38px;
+  }
+
+  .header-status {
+    justify-content: stretch;
   }
 
   .signal-banner {
