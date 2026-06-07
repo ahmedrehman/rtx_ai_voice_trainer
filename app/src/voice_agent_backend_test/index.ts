@@ -4,6 +4,7 @@ export const VOICE_AGENT_BACKEND_TEST_MODULE = {
   debugPages: [],
   testFiles: [
     "create_settings.test.ts",
+    "five_turn_listen_speak_real.test.ts",
     "text_chat_missing_typed_text.test.ts",
     "text_chat_missing_openai_config.test.ts",
     "text_chat_real_answer.test.ts",

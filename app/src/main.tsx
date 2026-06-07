@@ -254,7 +254,18 @@ function AppVoiceExperience({
   const [lastSignal, setLastSignal] = useState<{ type: "idle" | "improvement" | "error"; text: string }>({ type: "idle", text: "" });
   const [lastAudioUrl, setLastAudioUrl] = useState("");
   const stopListenRef = useRef(false);
+  const speakEnabledRef = useRef(false);
+  const speechAbortRef = useRef<AbortController | null>(null);
   const { stack, pushStack, updateStack } = useDebugStack();
+
+  useEffect(() => {
+    speakEnabledRef.current = speakEnabled;
+    if (!speakEnabled) stopSpeakingNow();
+  }, [speakEnabled]);
+
+  useEffect(() => {
+    return () => stopSpeakingNow();
+  }, []);
 
   useEffect(() => {
     const message: VoiceAgentChatMessage = {
@@ -310,11 +321,11 @@ function AppVoiceExperience({
       } else {
         setLastSignal({ type: "error", text: result.status.error || "Text chat failed" });
       }
-      if (speakEnabled && result.audio) {
-        const playResult = await VOICE_AGENT_PLAY_AUDIO({}, result.audio);
+      if (speakEnabledRef.current && result.audio) {
+        const playResult = await playVoiceAgentAudio(result.audio);
         if (lastAudioUrl) URL.revokeObjectURL(lastAudioUrl);
         setLastAudioUrl(URL.createObjectURL(base64ToBlob(result.audio.audioBase64, result.audio.audioFormat)));
-        if (!playResult.played) setLastSignal({ type: "error", text: "Audio returned, but browser playback failed" });
+        if (!playResult.played && !playResult.stopped) setLastSignal({ type: "error", text: "Audio returned, but browser playback failed" });
       }
       if (debug && id) {
         updateStack(id, {
@@ -372,7 +383,8 @@ function AppVoiceExperience({
         settings,
         audio,
         textUserChat: userText,
-        history5LastTextChats: messages.slice(-5).map((message) => `${message.role}: ${message.text}`)
+        history5LastTextChats: messages.slice(-5).map((message) => `${message.role}: ${message.text}`),
+        speakEnabled: speakEnabledRef.current
       });
       if (result.chatMessage) setMessages((current) => [...current, result.chatMessage as VoiceAgentChatMessage].slice(-30));
       const resultJson = isAudioAnalyserResponse(result.response) ? result.response.json : null;
@@ -384,8 +396,8 @@ function AppVoiceExperience({
         setLastSignal({ type: "error", text: result.status.error || "Audio analysis failed" });
       }
       let played = false;
-      if (speakEnabled && result.audio) {
-        const playResult = await VOICE_AGENT_PLAY_AUDIO({}, result.audio);
+      if (speakEnabledRef.current && result.audio) {
+        const playResult = await playVoiceAgentAudio(result.audio);
         played = playResult.played;
         if (lastAudioUrl) URL.revokeObjectURL(lastAudioUrl);
         const nextAudioUrl = URL.createObjectURL(base64ToBlob(result.audio.audioBase64, result.audio.audioFormat));
@@ -397,7 +409,7 @@ function AppVoiceExperience({
           { label: "Capture app input", state: "done", detail: "Chat text, audio, topic, and keywords captured from client state." },
           { label: "Call voice_agent frontend", state: result.status.ok ? "done" : "error", detail: result.status.ok ? "AUDIO_ANALYSER returned ok." : String(result.status.error || "AUDIO_ANALYSER failed.") },
           { label: `Business decision: response usable? ${result.status.ok ? "YES" : "NO"}`, state: result.status.ok ? "done" : "error", detail: result.status.ok ? "Chat response can be shown." : String(result.status.error || "No usable response.") },
-          { label: "Speak response", state: speakEnabled ? played ? "done" : result.audio ? "error" : "not_implemented" : "done", detail: speakEnabled ? played ? "AI audio played." : result.audio ? "AI audio existed but playback failed." : "No AI audio returned." : "Speak toggle is off." }
+          { label: "Speak response", state: speakEnabledRef.current ? played ? "done" : result.audio ? "error" : "not_implemented" : "done", detail: speakEnabledRef.current ? played ? "AI audio played." : result.audio ? "AI audio existed but playback failed." : "No AI audio returned." : "Speak toggle is off." }
         ],
         output: result,
         error: result.status.error
@@ -469,6 +481,39 @@ function AppVoiceExperience({
     void startListenLoop();
   }
 
+  function stopSpeakingNow() {
+    speechAbortRef.current?.abort();
+    speechAbortRef.current = null;
+    if (typeof window !== "undefined" && "speechSynthesis" in window) {
+      window.speechSynthesis.cancel();
+    }
+  }
+
+  async function playVoiceAgentAudio(audio: { audioBase64: string; audioFormat: string }) {
+    if (!speakEnabledRef.current) {
+      return {
+        status: {
+          method: "SYSTEM_AUDIO_TO_SPEAKER",
+          ok: false,
+          phase: "error" as const,
+          startedAt: new Date().toISOString(),
+          finishedAt: new Date().toISOString(),
+          error: "Speak toggle is off."
+        },
+        played: false,
+        stopped: true
+      };
+    }
+    stopSpeakingNow();
+    const controller = new AbortController();
+    speechAbortRef.current = controller;
+    try {
+      return await VOICE_AGENT_PLAY_AUDIO({}, audio, { signal: controller.signal });
+    } finally {
+      if (speechAbortRef.current === controller) speechAbortRef.current = null;
+    }
+  }
+
   return (
     <section className={debug ? "voice-app debug-version" : "voice-app"}>
       <div className="chat-shell">
@@ -507,7 +552,18 @@ function AppVoiceExperience({
         {lastAudioUrl && <audio controls src={lastAudioUrl} />}
 
         <div className="chat-composer">
-          <textarea value={textUserChat} onChange={(event) => setTextUserChat(event.target.value)} rows={2} placeholder="Type a message..." />
+          <textarea
+            value={textUserChat}
+            onChange={(event) => setTextUserChat(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void sendTextChat();
+              }
+            }}
+            rows={2}
+            placeholder="Type a message..."
+          />
           <button className="run-button" type="button" onClick={() => void sendTextChat()} disabled={running || !textUserChat.trim()}>
             {running ? "Sending..." : "Send"}
           </button>

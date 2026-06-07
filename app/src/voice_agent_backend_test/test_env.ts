@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { VoiceAgentStreamTextChatEvent } from "../voice_agent";
 
 export const apiKey = loadLocalEnvAndGetOpenAiKey();
@@ -9,6 +10,7 @@ export function serverConfig() {
     implementation: "openai-audio" as const,
     openAiApiKey: apiKey,
     textModel: "gpt-4.1-mini",
+    audioModel: "gpt-audio",
     ttsModel: "gpt-4o-mini-tts",
     voice: "coral"
   };
@@ -28,6 +30,10 @@ export async function readVoiceAgentStreamEvents(response: Response) {
     .filter(Boolean)
     .map((part) => part.startsWith("data:") ? part.slice(5).trim() : part)
     .map((jsonText) => JSON.parse(jsonText) as VoiceAgentStreamTextChatEvent);
+}
+
+export function sampleAudioBase64() {
+  return readFileSync(join(process.cwd(), "public", "test-audio", "sample-voice-test.wav")).toString("base64");
 }
 
 function loadLocalEnvAndGetOpenAiKey() {

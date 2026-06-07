@@ -220,7 +220,8 @@ async function realMethod(request: Request, env: Env) {
       audioFormat: body.audioFormat || "webm",
       textUserChat: body.textUserChat || "",
       history5LastTextChats: VOICE_AGENT_BACKEND.NORMALIZE_HISTORY(body.history5LastTextChats),
-      additionalInstructions: body.additionalInstructions || ""
+      additionalInstructions: body.additionalInstructions || "",
+      speakEnabled: Boolean(body.speakEnabled)
     }
   );
 }

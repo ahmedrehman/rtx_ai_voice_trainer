@@ -166,7 +166,7 @@ function VoiceAgentStreamTextChatTestPage({ settings }: { settings: VoiceAgentSe
     } catch (error) {
       updateStack(id, {
         status: "error",
-        steps: [{ label: "Run streaming text-chat test", state: "error", detail: error instanceof Error ? error.message : String(error) }],
+        steps: [{ label: "Run streaming text-only test", state: "error", detail: error instanceof Error ? error.message : String(error) }],
         error: error instanceof Error ? error.message : String(error)
       });
     } finally {
@@ -181,7 +181,7 @@ function VoiceAgentStreamTextChatTestPage({ settings }: { settings: VoiceAgentSe
           <h2>Inputs</h2>
           <label className="field"><span>textUserChat</span><textarea value={textUserChat} onChange={(event) => setTextUserChat(event.target.value)} rows={4} /><small>Latest typed user message. This method streams plain text only.</small></label>
           <label className="field"><span>history5LastTextChats</span><textarea value={historyText} onChange={(event) => setHistoryText(event.target.value)} rows={4} /><small>JSON array of previous text chat messages. Context only.</small></label>
-          <button className="run-button" type="button" onClick={() => void runStreamTextChatTest()} disabled={running || !textUserChat.trim()}>{running ? "Streaming..." : "Run streaming text chat"}</button>
+          <button className="run-button" type="button" onClick={() => void runStreamTextChatTest()} disabled={running || !textUserChat.trim()}>{running ? "Streaming..." : "Run streaming text only"}</button>
         </section>
         <section className="method-panel">
           <h2>Prompt Inputs</h2>
@@ -195,7 +195,7 @@ function VoiceAgentStreamTextChatTestPage({ settings }: { settings: VoiceAgentSe
         <h2>Streamed answer</h2>
         <div className="chat-window compact">{streamText || "No stream text yet."}</div>
       </section>
-      {stack.length === 0 ? <p>No streaming text-chat test run yet.</p> : stack.map((item) => <StackArticle item={item} key={item.id} />)}
+      {stack.length === 0 ? <p>No streaming text-only test run yet.</p> : stack.map((item) => <StackArticle item={item} key={item.id} />)}
     </section>
   );
 }

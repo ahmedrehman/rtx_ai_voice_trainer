@@ -122,6 +122,7 @@ export type AudioAnalyserInput = {
   };
   history5LastTextChats: unknown[];
   voice?: string;
+  speakEnabled?: boolean;
 };
 
 export type AudioAnalyserOutput = {
@@ -303,15 +304,17 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
     input.systemPrompt.systemPrompt,
     input.systemPrompt.task,
     input.systemPrompt.howToRespond,
-    "Use the original microphone audio. Judge pronunciation and accent from the sound.",
+    "The original microphone audio is already attached to this request.",
+    "Answer normal chat naturally. Give pronunciation or accent feedback only when there is a concrete useful correction.",
     "Return the text message as JSON only.",
     "Do not put spoken-audio instructions inside the JSON.",
+    "Never say you will analyze, process, proceed, wait, hold on, or need microphone audio.",
     "Do not write prose outside the JSON object."
   ].join("\n");
   const taskPrompt = [
     `TEXT USER CHAT: ${input.textUserChat || ""}`,
     `HISTORY 5 LAST TEXT CHATS: ${JSON.stringify(input.history5LastTextChats)}`,
-    "The audio is the source of truth for pronunciation/accent.",
+    "Use the audio when it helps, but do not turn every chat answer into pronunciation analysis.",
     "The server will create spoken audio later from json.chat_text_to_user only."
   ].join("\n");
 
@@ -336,13 +339,15 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
       }
     );
     const parsed = parseAudioAnalyserJson(ai.text);
-    const chatTextToUser = parsed.chat_text_to_user || parsed.hint || "I heard you, but I could not create a useful short answer.";
-    const spokenAudio = await createAnalyserSpeechAudio(config, input, chatTextToUser).catch((error) => ({
-      audioBase64: "",
-      audioFormat: "",
-      model: "",
-      error: error instanceof Error ? error.message : String(error)
-    }));
+    const chatTextToUser = validateAudioAnalyserChatText(parsed.chat_text_to_user || parsed.hint);
+    const spokenAudio = input.speakEnabled
+      ? await createAnalyserSpeechAudio(config, input, chatTextToUser).catch((error) => ({
+          audioBase64: "",
+          audioFormat: "",
+          model: "",
+          error: error instanceof Error ? error.message : String(error)
+        }))
+      : null;
     const output: AudioAnalyserOutput = {
       status: doneStatus("AUDIO_ANALYSER", startedAt),
       json: {
@@ -351,15 +356,15 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
         text_corrected: parsed.text_corrected,
         hint: parsed.hint
       },
-      audio: spokenAudio.audioBase64 ? { audioBase64: spokenAudio.audioBase64, audioFormat: spokenAudio.audioFormat, model: spokenAudio.model } : null,
+      audio: spokenAudio?.audioBase64 ? { audioBase64: spokenAudio.audioBase64, audioFormat: spokenAudio.audioFormat, model: spokenAudio.model } : null,
       debug: {
         config: publicConfig(config),
         inputWithoutAudio: withoutAnalyserAudio(input),
         promptSent: { systemPrompt, taskPrompt, responseJsonFormat: input.systemPrompt.responseJsonFormat },
         rawAiText: ai.text,
-        spokenAudioText: chatTextToUser,
-        spokenAudioSource: "json.chat_text_to_user",
-        spokenAudioError: "error" in spokenAudio ? spokenAudio.error : undefined
+        spokenAudioText: input.speakEnabled ? chatTextToUser : undefined,
+        spokenAudioSource: input.speakEnabled ? "json.chat_text_to_user" : undefined,
+        spokenAudioError: spokenAudio && "error" in spokenAudio ? String(spokenAudio.error) : undefined
       }
     };
     log(config, "info", "AUDIO_ANALYSER", "done", statusOnly(output.status));
@@ -527,6 +532,21 @@ function emptyAnalyserJson(message: string): AudioAnalyserOutput["json"] {
     text_corrected: "",
     hint: ""
   };
+}
+
+export function validateAudioAnalyserChatText(text: string) {
+  const value = text.trim();
+  if (!value) {
+    throw new Error("AUDIO_ANALYSER returned no user-facing chat_text_to_user.");
+  }
+  if (containsInternalProcessText(value)) {
+    throw new Error("AUDIO_ANALYSER returned internal process text instead of a user-facing answer.");
+  }
+  return value;
+}
+
+function containsInternalProcessText(text: string) {
+  return /(?:i will now|i[’']ll now|please hold|hold on|i need to listen to the audio|provide the original microphone audio|please provide.*audio|please upload|i[’']?m ready to analy[sz]e|i[’']?m unable to analy[sz]e audio directly|audio input is essential|once the audio is provided|proceed with the analysis|analy[sz]e pronunciation|process it and return|detect keywords and evaluate)/i.test(text);
 }
 
 function summarize(value: unknown) {

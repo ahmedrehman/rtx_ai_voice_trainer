@@ -2,9 +2,9 @@ import type { DebugPageDefinition } from "../debug_page_types";
 
 export const VOICE_AGENT_STREAM_TEXT_CHAT_DEBUG_PAGE: DebugPageDefinition = {
   id: "VOICE_AGENT_STREAM_TEXT_CHAT_TEST",
-  title: "Voice agent streaming text chat",
+  title: "Voice agent streaming text only",
   module: "voice_agent_frontend_test",
-  role: "typed text + prompts -> fast streamed answer text, without changing VOICE_AGENT_TEXT_CHAT",
+  role: "typed text -> streamed answer text tokens only. No audio streaming.",
   ready: true,
   inputs: [
     {
@@ -40,7 +40,7 @@ export const VOICE_AGENT_STREAM_TEXT_CHAT_DEBUG_PAGE: DebugPageDefinition = {
   actions: [
     {
       id: "text",
-      label: "Run streaming text chat"
+      label: "Run streaming text only"
     }
   ],
   output: [

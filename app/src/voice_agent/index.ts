@@ -56,6 +56,7 @@ export type VoiceAgentAnalyseInput = {
   textUserChat: string;
   history5LastTextChats: string[];
   additionalInstructions?: string;
+  speakEnabled?: boolean;
 };
 
 export type VoiceAgentAnalyseResult = {
@@ -199,6 +200,7 @@ export type VoiceAgentServerAnalyseRequest = {
   voice?: string;
   systemPrompt?: string;
   additionalInstructions?: string;
+  speakEnabled?: boolean;
   settings?: Partial<VoiceAgentSettings> & { keyword?: string };
   promptConfig?: {
     systemTask?: string;
@@ -278,8 +280,8 @@ export function VOICE_AGENT_CREATE_PROMPTS(settings: VoiceAgentSettings) {
       ...basePrompts,
       task: [
         basePrompts.task,
-        "Focus on mistakes common for German speakers learning French.",
-        "Prioritize pronunciation and accent hints when the audio is understandable."
+        "Focus on mistakes common for German speakers learning French when a correction is actually useful.",
+        "For normal chat or greetings, answer naturally first. Do not mention pronunciation or accent unless giving a concrete correction."
       ].join("\n")
     };
   }
@@ -318,6 +320,7 @@ export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): 
       },
       textUserChat: input.textUserChat,
       history5LastTextChats: input.history5LastTextChats,
+      speakEnabled: Boolean(input.speakEnabled),
       provider: input.settings.provider,
       voice: input.settings.voice,
       settings: {
@@ -344,9 +347,9 @@ export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): 
     const data = await response.json().catch(() => ({ error: "Response was not JSON." })) as AudioAnalyserOutput | { error: string };
     const methodOk = response.ok && isAudioAnalyserOutput(data) && data.status.ok;
     const error = isAudioAnalyserOutput(data) ? data.status.error : "error" in data ? data.error : undefined;
-    const chatText = isAudioAnalyserOutput(data)
+    const chatText = methodOk && isAudioAnalyserOutput(data)
       ? data.json.chat_text_to_user || data.json.hint || data.status.error || ""
-      : data.error;
+      : "";
 
     return {
       status: {
@@ -386,8 +389,8 @@ export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): 
   }
 }
 
-export async function VOICE_AGENT_PLAY_AUDIO(config: ClientVoiceConfig, audio: { audioBase64: string; audioFormat: string }) {
-  return SYSTEM_AUDIO_TO_SPEAKER(config, { audio: base64ToBlob(audio.audioBase64, audio.audioFormat) });
+export async function VOICE_AGENT_PLAY_AUDIO(config: ClientVoiceConfig, audio: { audioBase64: string; audioFormat: string }, options: { signal?: AbortSignal } = {}) {
+  return SYSTEM_AUDIO_TO_SPEAKER(config, { audio: base64ToBlob(audio.audioBase64, audio.audioFormat), signal: options.signal });
 }
 
 export async function VOICE_AGENT_SEND_TEXT_CHAT(input: VoiceAgentTextChatInput) {
@@ -547,6 +550,7 @@ export async function VOICE_AGENT_SERVER_ANALYSE_AUDIO(config: ServerAiConfig, i
   textUserChat?: string;
   history5LastTextChats?: string[];
   additionalInstructions?: string;
+  speakEnabled?: boolean;
 }): Promise<AudioAnalyserOutput> {
   const prompts = VOICE_AGENT_CREATE_PROMPTS(input.settings);
   return AUDIO_ANALYSER(config, {
@@ -563,7 +567,8 @@ export async function VOICE_AGENT_SERVER_ANALYSE_AUDIO(config: ServerAiConfig, i
       audioFormat: input.audioFormat || "wav"
     },
     history5LastTextChats: input.history5LastTextChats || [],
-    voice: input.settings.voice
+    voice: input.settings.voice,
+    speakEnabled: Boolean(input.speakEnabled)
   });
 }
 

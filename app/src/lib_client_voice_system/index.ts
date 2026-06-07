@@ -108,11 +108,13 @@ export type SystemMeaningfulAudioChunkOutput = {
 
 export type SystemAudioToSpeakerInput = {
   audio: Blob;
+  signal?: AbortSignal;
 };
 
 export type SystemAudioToSpeakerOutput = {
   status: MethodStatus;
   played: boolean;
+  stopped?: boolean;
 };
 
 export type SystemTextToAudioInput = {
@@ -427,21 +429,38 @@ export async function SYSTEM_AUDIO_TO_SPEAKER(config: ClientVoiceConfig, input: 
   const audio = new Audio(url);
 
   return new Promise((resolve) => {
-    audio.onended = () => {
+    let settled = false;
+    function finish(output: SystemAudioToSpeakerOutput) {
+      if (settled) return;
+      settled = true;
+      input.signal?.removeEventListener("abort", abortPlayback);
       URL.revokeObjectURL(url);
+      resolve(output);
+    }
+    function abortPlayback() {
+      audio.pause();
+      audio.currentTime = 0;
+      const error = new Error("client speaker playback stopped");
+      log(config, "info", "SYSTEM_AUDIO_TO_SPEAKER", "stopped");
+      finish({ status: errorStatus("SYSTEM_AUDIO_TO_SPEAKER", startedAt, error), played: false, stopped: true });
+    }
+    if (input.signal?.aborted) {
+      abortPlayback();
+      return;
+    }
+    input.signal?.addEventListener("abort", abortPlayback, { once: true });
+    audio.onended = () => {
       log(config, "info", "SYSTEM_AUDIO_TO_SPEAKER", "done");
-      resolve({ status: doneStatus("SYSTEM_AUDIO_TO_SPEAKER", startedAt), played: true });
+      finish({ status: doneStatus("SYSTEM_AUDIO_TO_SPEAKER", startedAt), played: true });
     };
     audio.onerror = () => {
-      URL.revokeObjectURL(url);
       const error = new Error("client speaker playback failed");
       log(config, "error", "SYSTEM_AUDIO_TO_SPEAKER", error.message);
-      resolve({ status: errorStatus("SYSTEM_AUDIO_TO_SPEAKER", startedAt, error), played: false });
+      finish({ status: errorStatus("SYSTEM_AUDIO_TO_SPEAKER", startedAt, error), played: false });
     };
     void audio.play().catch((error) => {
-      URL.revokeObjectURL(url);
       log(config, "error", "SYSTEM_AUDIO_TO_SPEAKER", error instanceof Error ? error.message : "playback failed");
-      resolve({ status: errorStatus("SYSTEM_AUDIO_TO_SPEAKER", startedAt, error), played: false });
+      finish({ status: errorStatus("SYSTEM_AUDIO_TO_SPEAKER", startedAt, error), played: false });
     });
   });
 }
