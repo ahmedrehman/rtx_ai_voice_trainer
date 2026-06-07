@@ -354,46 +354,32 @@ p {
   font-weight: 800;
 }
 
-.app-signal {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 38px;
-  padding: 8px 10px;
-  border: 1px solid #dedede;
-  border-radius: 8px;
-  color: #555555;
-  background: #fafafa;
+.signal-lamp-wrap {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
 }
 
-.app-signal strong {
-  color: #242424;
-  font-size: 0.78rem;
-  text-transform: uppercase;
+.signal-lamp {
+  width: 13px;
+  height: 13px;
+  border-radius: 999px;
+  border: 1px solid #bdbdbd;
+  background: #ededed;
 }
 
-.app-signal.ok {
-  border-color: #b9dfc5;
-  color: #20633a;
-  background: #f3fbf5;
+.signal-lamp.improvement {
+  border-color: #c78318;
+  background: #f7b84b;
+  box-shadow: 0 0 0 4px #fff3d6;
 }
 
-.app-signal.improvement {
-  border-color: #f3c36f;
-  color: #744400;
-  background: #fff8e9;
-}
-
-.app-signal.error {
-  border-color: #e6a0a0;
-  color: #8a1111;
-  background: #fff7f7;
-}
-
-.app-signal.running {
-  border-color: #b8d4f8;
-  color: #0f4ca8;
-  background: #eef5ff;
+.signal-lamp.error {
+  border-color: #a01717;
+  background: #d83b3b;
+  box-shadow: 0 0 0 4px #ffe3e3;
 }
 
 .chat-window {

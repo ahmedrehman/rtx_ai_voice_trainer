@@ -243,7 +243,7 @@ function AppVoiceExperience({
   const [listenEnabled, setListenEnabled] = useState(false);
   const [speakEnabled, setSpeakEnabled] = useState(false);
   const [running, setRunning] = useState(false);
-  const [lastSignal, setLastSignal] = useState<{ type: "idle" | "running" | "improvement" | "error"; text: string }>({ type: "idle", text: "" });
+  const [lastSignal, setLastSignal] = useState<{ type: "idle" | "improvement" | "error"; text: string }>({ type: "idle", text: "" });
   const [lastAudioUrl, setLastAudioUrl] = useState("");
   const stopListenRef = useRef(false);
   const { stack, pushStack, updateStack } = useDebugStack();
@@ -273,7 +273,7 @@ function AppVoiceExperience({
     setMessages((current) => [...current, userMessage].slice(-30));
     setTextUserChat("");
     setRunning(true);
-    setLastSignal({ type: "running", text: "Sending..." });
+    setLastSignal({ type: "idle", text: "" });
     const id = debug ? pushStack({
       type: "VOICE_AGENT_TEXT_CHAT",
       status: "running",
@@ -482,14 +482,10 @@ function AppVoiceExperience({
           {debug && <span className="topic-pill">{settings.topic}</span>}
           {debug && <span className="topic-pill">on: {settings.keywordOn}</span>}
           {debug && <span className="topic-pill">off: {settings.keywordOff}</span>}
+          <span className="signal-lamp-wrap" aria-live="polite">
+            <span className={`signal-lamp ${lastSignal.type}`} title={lastSignal.text || "No issue"} />
+          </span>
         </div>
-
-        {lastSignal.type !== "idle" && (
-          <div className={`app-signal ${lastSignal.type}`}>
-            <strong>{lastSignal.type === "improvement" ? "Has improvement" : lastSignal.type === "error" ? "Has error" : "Working"}</strong>
-            <span>{lastSignal.text}</span>
-          </div>
-        )}
 
         <div className="chat-window">
           {messages.map((message) => (
