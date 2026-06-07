@@ -80,6 +80,8 @@ async function speakAudio(request: Request, env: Env) {
     voice?: string;
     languageName?: string;
     style?: string;
+    systemPrompt?: string;
+    additionalInstructions?: string;
   };
   const text = String(body.text || "").trim();
   if (!text) {
@@ -92,7 +94,7 @@ async function speakAudio(request: Request, env: Env) {
       text,
       voice: body.voice,
       languageName: body.languageName,
-      style: body.style
+      style: [body.systemPrompt, body.additionalInstructions, body.style].filter(Boolean).join("\n") || undefined
     }
   );
 
@@ -114,6 +116,8 @@ async function audioTurn(request: Request, env: Env) {
     audioBase64?: string;
     audioFormat?: string;
     voice?: string;
+    systemPrompt?: string;
+    additionalInstructions?: string;
     settings?: { languageName?: string; topic?: string; keyword?: string };
     promptConfig?: { systemTask?: string; howToRespond?: string; responseJsonFormat?: string };
   };
@@ -125,13 +129,15 @@ async function audioTurn(request: Request, env: Env) {
   const settings = body.settings || {};
   const promptConfig = body.promptConfig || {};
   const prompt = [
+    body.systemPrompt,
     promptConfig.systemTask || `You are a silent-first ${settings.languageName || "French"} voice trainer.`,
     `Topic: ${settings.topic || "daily conversation"}.`,
     `Keyword: ${settings.keyword || "computer"}.`,
     "Listen to the user's audio.",
     promptConfig.responseJsonFormat ? `RESPONSE JSON FORMAT: ${promptConfig.responseJsonFormat}` : "Return a short text message that is valid JSON with fields: text_original, text_corrected, message, hint, signal.",
+    body.additionalInstructions,
     promptConfig.howToRespond || "Also produce a short spoken correction in audio. Keep it minimal."
-  ].join("\n");
+  ].filter(Boolean).join("\n");
   return json(await RAW_AUDIO_TO_AI_TEXT_AND_AUDIO(
     { openAiApiKey: env.OPENAI_API_KEY },
     {
@@ -154,6 +160,8 @@ async function realMethod(request: Request, env: Env) {
     textUserChat?: string;
     history5LastTextChats?: unknown[];
     settings?: { languageName?: string; topic?: string; keyword?: string };
+    systemPrompt?: string;
+    additionalInstructions?: string;
     promptConfig?: { systemTask?: string; howToRespond?: string; responseJsonFormat?: string };
     voice?: string;
   };
@@ -182,9 +190,9 @@ async function realMethod(request: Request, env: Env) {
     {
       provider: "openai",
       systemPrompt: {
-        task: promptConfig.systemTask || `You are a ${settings.languageName || "French"} voice trainer. Topic: ${settings.topic || "daily conversation"}. Keyword on/off words: ${settings.keyword || "computer"} / ${settings.keyword || "computer"} off.`,
+        task: [body.systemPrompt, promptConfig.systemTask || `You are a ${settings.languageName || "French"} voice trainer. Topic: ${settings.topic || "daily conversation"}. Keyword on/off words: ${settings.keyword || "computer"} / ${settings.keyword || "computer"} off.`].filter(Boolean).join("\n"),
         responseJsonFormat: promptConfig.responseJsonFormat || responseJsonFormat,
-        howToRespond: promptConfig.howToRespond || "Use original audio. Return JSON text plus short spoken audio. Keep it short."
+        howToRespond: [body.additionalInstructions, promptConfig.howToRespond || "Use original audio. Return JSON text plus short spoken audio. Keep it short."].filter(Boolean).join("\n")
       },
       textUserChat: body.textUserChat || "",
       audioUserAudio: {

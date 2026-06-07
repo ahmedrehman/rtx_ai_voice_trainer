@@ -1038,9 +1038,12 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
   const [voice, setVoice] = useState("coral");
   const [languageName, setLanguageName] = useState("French");
   const [style, setStyle] = useState("Speak as a calm trainer. Keep it short.");
+  const [systemPrompt, setSystemPrompt] = useState("You are a short voice trainer.");
+  const [additionalInstructions, setAdditionalInstructions] = useState("Keep it short.");
   const [audio, setAudio] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
   const [textUserChat, setTextUserChat] = useState("Bonjour, je veux tester ma voix.");
+  const [textChat, setTextChat] = useState("");
   const [historyText, setHistoryText] = useState("[]");
   const [systemTask, setSystemTask] = useState("You are a French voice trainer. Judge pronunciation from original audio.");
   const [howToRespond, setHowToRespond] = useState("Return JSON text and short spoken audio. Keep it short.");
@@ -1066,10 +1069,13 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
       voice,
       languageName,
       style,
+      systemPrompt,
+      additionalInstructions,
       audio: audio ? { size: audio.size, type: audio.type, name: audio.name } : null,
+      textChat,
       textUserChat,
       historyText,
-      promptConfig: needsPrompts ? { systemTask, howToRespond, responseJsonFormat } : undefined
+      promptConfig: { systemPrompt, additionalInstructions, systemTask, howToRespond, responseJsonFormat }
     };
     const id = pushStack({
       type: methodId,
@@ -1103,11 +1109,16 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
         response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, voice, languageName, style })
+          body: JSON.stringify({ text, voice, languageName, style, systemPrompt, additionalInstructions })
         });
       } else if (methodId === "PRIMITIVE_AUDIO_TO_TEXT") {
         const form = new FormData();
         form.set("file", audio as File);
+        form.set("systemPrompt", systemPrompt);
+        form.set("additionalInstructions", additionalInstructions);
+        form.set("textChat", textChat);
+        form.set("history", historyText);
+        form.set("prompt", [systemPrompt, additionalInstructions, textChat, historyText].filter(Boolean).join("\n"));
         response = await fetch(endpoint, { method: "POST", body: form });
       } else {
         const audioBase64 = await blobToBase64(audio as File);
@@ -1119,6 +1130,8 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
               textUserChat,
               history5LastTextChats,
               voice,
+              systemPrompt,
+              additionalInstructions,
               promptConfig: { systemTask, howToRespond, responseJsonFormat }
             }
           : {
@@ -1126,6 +1139,8 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
               audioFormat: audio?.type || "webm",
               voice,
               settings: { languageName },
+              systemPrompt,
+              additionalInstructions,
               promptConfig: { systemTask, howToRespond, responseJsonFormat }
             };
         response = await fetch(endpoint, {
@@ -1205,8 +1220,16 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
           {methodId === "PRIMITIVE_TEXT_TO_AUDIO" && (
             <>
               <label className="field"><span>text</span><textarea value={text} onChange={(event) => setText(event.target.value)} rows={4} /><small>Text sent to server TTS endpoint.</small></label>
-              <label className="field"><span>style</span><textarea value={style} onChange={(event) => setStyle(event.target.value)} rows={3} /><small>TTS style/instructions sent to server.</small></label>
             </>
+          )}
+          {(methodId === "PRIMITIVE_TEXT_TO_AUDIO" || methodId === "PRIMITIVE_AUDIO_TO_TEXT") && (
+            <>
+              <label className="field"><span>systemPrompt</span><textarea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={4} /><small>Editable instruction input sent to endpoint.</small></label>
+              <label className="field"><span>additionalInstructions</span><textarea value={additionalInstructions} onChange={(event) => setAdditionalInstructions(event.target.value)} rows={3} /><small>Editable additional instruction input sent to endpoint.</small></label>
+            </>
+          )}
+          {methodId === "PRIMITIVE_TEXT_TO_AUDIO" && (
+            <label className="field"><span>style</span><textarea value={style} onChange={(event) => setStyle(event.target.value)} rows={3} /><small>TTS style/instructions sent to server.</small></label>
           )}
           {needsAudio && (
             <label className="field">
@@ -1221,8 +1244,16 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
               <label className="field"><span>history5LastTextChats</span><textarea value={historyText} onChange={(event) => setHistoryText(event.target.value)} rows={3} /><small>JSON array. Sent to server as history.</small></label>
             </>
           )}
+          {methodId === "PRIMITIVE_AUDIO_TO_TEXT" && (
+            <>
+              <label className="field"><span>textChat</span><textarea value={textChat} onChange={(event) => setTextChat(event.target.value)} rows={3} /><small>Text chat context sent with primitive transcription request.</small></label>
+              <label className="field"><span>history</span><textarea value={historyText} onChange={(event) => setHistoryText(event.target.value)} rows={3} /><small>JSON history sent with primitive transcription request.</small></label>
+            </>
+          )}
           {needsPrompts && (
             <>
+              <label className="field"><span>systemPrompt</span><textarea value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} rows={3} /><small>Editable top-level system prompt sent to endpoint.</small></label>
+              <label className="field"><span>additionalInstructions</span><textarea value={additionalInstructions} onChange={(event) => setAdditionalInstructions(event.target.value)} rows={3} /><small>Editable extra instruction sent to endpoint.</small></label>
               <label className="field"><span>systemTask</span><textarea value={systemTask} onChange={(event) => setSystemTask(event.target.value)} rows={4} /><small>Prompt task sent to server.</small></label>
               <label className="field"><span>howToRespond</span><textarea value={howToRespond} onChange={(event) => setHowToRespond(event.target.value)} rows={3} /><small>Prompt response instructions sent to server.</small></label>
               <label className="field"><span>responseJsonFormat</span><textarea value={responseJsonFormat} onChange={(event) => setResponseJsonFormat(event.target.value)} rows={5} /><small>Requested JSON shape.</small></label>
@@ -1358,12 +1389,6 @@ function DataStoreMethodDebug({ methodId }: { methodId: string }) {
 }
 
 function StackArticle({ item, compact = false }: { item: StackItem; compact?: boolean }) {
-  const business = item.business as Record<string, unknown> | undefined;
-  const businessDecision = business?.BUSINESS_DECISION_USEFUL_CHUNK !== undefined
-    ? `USEFUL CHUNK = ${String(business.BUSINESS_DECISION_USEFUL_CHUNK)}`
-    : String(business?.BUSINESS_DECISION || "");
-  const decisionOk = business?.decision_ok === true || business?.BUSINESS_DECISION_USEFUL_CHUNK === "YES";
-
   return (
     <article className={`stack-item ${item.status}`} key={item.id}>
       <div>
@@ -1371,13 +1396,6 @@ function StackArticle({ item, compact = false }: { item: StackItem; compact?: bo
         <span>{item.status}</span>
         <time>{new Date(item.createdAt).toLocaleTimeString()}</time>
       </div>
-      {business !== undefined && (
-        <section className={`decision-result ${decisionOk ? "yes" : "no"}`}>
-          <strong>BUSINESS DECISION: {businessDecision}</strong>
-          <span>SEND TO AI: {String(business.send_to_ai)}</span>
-          <p>{String(business.business_reason)}</p>
-        </section>
-      )}
       {!compact && item.steps && (
         <section className="step-list">
           <h3>Business sequence</h3>
@@ -1390,16 +1408,21 @@ function StackArticle({ item, compact = false }: { item: StackItem; compact?: bo
           ))}
         </section>
       )}
-      {business !== undefined && (
-        <section className="business-result">
-          <h3>Business object</h3>
-          <pre>{JSON.stringify(business, null, 2)}</pre>
-        </section>
+      {item.input !== undefined && (
+        <details open>
+          <summary>Real input / request</summary>
+          <pre>{JSON.stringify(item.input, null, 2)}</pre>
+        </details>
+      )}
+      {item.output !== undefined && (
+        <details open>
+          <summary>Real output / response</summary>
+          <pre>{JSON.stringify(item.output, null, 2)}</pre>
+        </details>
       )}
       <details>
         <summary>Raw item JSON</summary>
         <pre>{JSON.stringify({
-          business: item.business,
           steps: item.steps,
           input: item.input,
           output: item.output,
