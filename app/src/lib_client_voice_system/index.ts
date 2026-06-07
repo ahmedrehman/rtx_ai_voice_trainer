@@ -510,14 +510,12 @@ export async function SYSTEM_AUDIO_TO_TEXT(config: ClientVoiceConfig, input: Sys
         finish({ status: doneStatus("SYSTEM_AUDIO_TO_TEXT", startedAt), text: text.trim(), note: "browser_speech_recognition_only" });
         return;
       }
-      const error = new Error("client browser speech recognition ended without text");
-      log(config, "error", "SYSTEM_AUDIO_TO_TEXT", error.message);
-      finish({ status: errorStatus("SYSTEM_AUDIO_TO_TEXT", startedAt, error), text: "", note: "browser_speech_recognition_only" });
+      log(config, "info", "SYSTEM_AUDIO_TO_TEXT", "ended without text");
+      finish({ status: doneStatus("SYSTEM_AUDIO_TO_TEXT", startedAt), text: "", note: "browser_speech_recognition_only" });
     };
     timeout = window.setTimeout(() => {
-      const error = new Error(`client browser speech recognition timed out after ${timeoutMs}ms`);
-      log(config, "error", "SYSTEM_AUDIO_TO_TEXT", error.message);
-      finish({ status: errorStatus("SYSTEM_AUDIO_TO_TEXT", startedAt, error), text: "", note: "browser_speech_recognition_only" });
+      log(config, "info", "SYSTEM_AUDIO_TO_TEXT", `timed out without text after ${timeoutMs}ms`);
+      finish({ status: doneStatus("SYSTEM_AUDIO_TO_TEXT", startedAt), text: "", note: "browser_speech_recognition_only" });
     }, timeoutMs);
     try {
       recognition.start();

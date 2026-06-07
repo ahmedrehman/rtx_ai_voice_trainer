@@ -322,10 +322,10 @@ function MeaningfulAudioChunkDebug() {
       const outputSteps: StackItem["steps"] = [
         { label: "Create input object", state: "done", detail: "Input values captured from page." },
         { label: "Request microphone", state: result.status.ok ? "done" : "error", detail: "Requested audio only. No camera requested." },
-        { label: "Start recorder", state: audioRecorded ? "done" : "error", detail: audioRecorded ? "MediaRecorder produced an audio blob." : "No audio blob was produced." },
+        { label: `Record audio blob: ${audioRecorded ? "YES" : "NO"}`, state: result.status.ok ? "done" : "error", detail: audioRecorded ? "MediaRecorder produced an audio blob." : "No audio blob was produced." },
         {
           label: "Speech helper",
-          state: speechCheckerAvailable ? (speechFound ? "done" : "error") : "not_implemented",
+          state: speechCheckerAvailable ? "done" : "not_implemented",
           detail: speechCheckerAvailable
             ? speechFound
               ? "Browser SpeechRecognition produced helper text."
@@ -334,7 +334,7 @@ function MeaningfulAudioChunkDebug() {
         },
         {
           label: "Audio energy check",
-          state: result.energyCheck.available ? (energyFound ? "done" : "error") : "not_implemented",
+          state: result.energyCheck.available ? "done" : "not_implemented",
           detail: result.energyCheck.available
             ? `SYSTEM_AUDIO_ENERGY_CHECK: maxRms ${result.energyCheck.maxRms}, active ${result.energyCheck.activeMs}ms, threshold ${result.energyCheck.threshold}, required ${result.energyCheck.minActiveMs}ms.`
             : `SYSTEM_AUDIO_ENERGY_CHECK unavailable. ${result.energyCheck.error || ""}`
@@ -342,8 +342,8 @@ function MeaningfulAudioChunkDebug() {
         { label: "Real VAD", state: "not_implemented", detail: "Not implemented. WebRTC VAD / ML VAD is not wired yet." },
         { label: "Stop recording", state: "done", detail: humanChunkReason(result.chunkReason) },
         {
-          label: "Business decision: useful chunk?",
-          state: usefulChunk ? "done" : "error",
+          label: `Business decision: useful chunk? ${usefulChunk ? "YES" : "NO"}`,
+          state: result.status.ok ? "done" : "error",
           detail: usefulChunk ? `YES. Decision method ${actualDecisionMode} confirmed the chunk.` : usefulChunkReason
         }
       ];
@@ -578,7 +578,7 @@ function AudioEnergyCheckDebug() {
         steps: [
           { label: "Request microphone", state: "done", detail: "Microphone stream opened with audio only." },
           { label: "Start energy check", state: summary.available ? "done" : "error", detail: summary.available ? "RMS energy samples collected." : String(summary.error || "AudioContext unavailable.") },
-          { label: "Decide sound", state: hasSound ? "done" : "error", detail: String(business.business_reason) }
+          { label: `Decide sound: ${hasSound ? "YES" : "NO"}`, state: summary.available ? "done" : "error", detail: String(business.business_reason) }
         ]
       });
     } catch (error) {
@@ -670,8 +670,8 @@ function MicroToAudioDebug() {
         },
         steps: [
           { label: "Request microphone", state: result.status.ok ? "done" : "error", detail: "Requested audio only. No camera requested." },
-          { label: "Record audio", state: recorded ? "done" : "error", detail: recorded ? "Audio blob exists." : "No audio blob exists." },
-          { label: "Business decision", state: recorded ? "done" : "error", detail: String(business.business_reason) }
+          { label: `Record audio: ${recorded ? "YES" : "NO"}`, state: result.status.ok ? "done" : "error", detail: recorded ? "Audio blob exists." : "No audio blob exists." },
+          { label: `Business decision: audio recorded? ${recorded ? "YES" : "NO"}`, state: result.status.ok ? "done" : "error", detail: String(business.business_reason) }
         ],
         error: result.status.error
       });
@@ -739,7 +739,7 @@ function AudioToTextDebug() {
         BUSINESS_DECISION: `TEXT_DETECTED=${hasText ? "YES" : "NO"}`,
         decision_ok: hasText,
         business_decision: hasText ? "TEXT_DETECTED" : "NO_TEXT",
-        business_reason: hasText ? "Browser SpeechRecognition returned text." : "Browser SpeechRecognition returned no text or failed.",
+        business_reason: hasText ? "Browser SpeechRecognition returned text." : "Browser SpeechRecognition returned no text.",
         send_to_ai: "NO_NOT_THIS_FUNCTION",
         method: "SYSTEM_AUDIO_TO_TEXT",
         note: "DEBUG PAGE BUSINESS OBJECT. Real method output is output.status + output.text + output.note. Browser helper only. Not AI transcription and not pronunciation analysis."
@@ -750,7 +750,7 @@ function AudioToTextDebug() {
         output: result,
         steps: [
           { label: "Start browser speech recognition", state: result.status.ok ? "done" : "error", detail: result.status.ok ? "Browser returned a result." : String(result.status.error || "Browser speech recognition failed.") },
-          { label: "Business decision", state: hasText ? "done" : "error", detail: String(business.business_reason) }
+          { label: `Business decision: text detected? ${hasText ? "YES" : "NO"}`, state: result.status.ok ? "done" : "error", detail: String(business.business_reason) }
         ],
         error: result.status.error
       });
@@ -827,7 +827,7 @@ function TextToAudioDebug() {
         output: result,
         steps: [
           { label: "Create browser utterance", state: result.status.ok ? "done" : "error", detail: result.status.ok ? "Browser accepted and played the utterance." : String(result.status.error || "Browser TTS failed.") },
-          { label: "Business decision", state: result.spoken ? "done" : "error", detail: String(business.business_reason) }
+          { label: `Business decision: spoken? ${result.spoken ? "YES" : "NO"}`, state: result.status.ok ? "done" : "error", detail: String(business.business_reason) }
         ],
         error: result.status.error
       });
@@ -919,7 +919,7 @@ function AudioToSpeakerDebug() {
         steps: [
           { label: "Check audio input", state: "done", detail: "Audio file was selected." },
           { label: "Play audio", state: result.played ? "done" : "error", detail: result.played ? "Browser reported playback ended." : String(result.status.error || "Playback failed.") },
-          { label: "Business decision", state: result.played ? "done" : "error", detail: String(business.business_reason) }
+          { label: `Business decision: played? ${result.played ? "YES" : "NO"}`, state: result.status.ok ? "done" : "error", detail: String(business.business_reason) }
         ],
         error: result.status.error
       });

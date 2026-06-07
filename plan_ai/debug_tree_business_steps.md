@@ -213,8 +213,19 @@ Use colored step rows for business-relevant status.
 - Red / `error`
   - method failed
   - required input missing
-  - no useful result
-  - endpoint returned error
+  - browser/API/endpoint returned an actual error
+  - config is missing
+  - exception occurred
+
+- Normal `NO` decision
+  - must not use `error`
+  - use `done`
+  - label must include `YES` or `NO`
+  - examples:
+    - `Business decision: useful chunk? NO`
+    - `Decide sound: NO`
+    - `Business decision: text detected? NO`
+  - reason explains why the valid result is `NO`
 
 - Blue / `running`
   - method is active
@@ -264,6 +275,7 @@ Business sequence
 
 - Do not show fake JSON as if it came from the method.
 - Do not label debug-page interpretation as method output.
+- Do not mark a valid `NO` decision as `error`.
 - Do not hide prompts.
 - Do not hide request bodies.
 - Do not hide response bodies.
@@ -311,6 +323,7 @@ NOT CONFIGURED - MISSING API KEY
 - Add audio/text/history/provider/config fields when accepted.
 - Make the run button call the real method/endpoint.
 - Show colored business sequence.
+- Use `error` only for real failures, not for valid `NO`.
 - Show real request/input.
 - Show real response/output.
 - Show status and errors.
