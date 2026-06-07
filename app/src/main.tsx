@@ -708,12 +708,14 @@ function MicroToAudioDebug() {
 
 function AudioToTextDebug() {
   const [lang, setLang] = useState("fr-FR");
+  const [timeoutMs, setTimeoutMs] = useState(6000);
   const [running, setRunning] = useState(false);
   const { stack, pushStack, updateStack } = useDebugStack();
 
   async function runListen() {
     const input = {
       lang,
+      timeoutMs,
       browserNeeds: {
         secureContext: window.isSecureContext,
         speechRecognitionChecker: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
@@ -731,7 +733,7 @@ function AudioToTextDebug() {
     });
     setRunning(true);
     try {
-      const result = await SYSTEM_AUDIO_TO_TEXT({ logger: loggerFor(pushStack) }, { lang });
+      const result = await SYSTEM_AUDIO_TO_TEXT({ logger: loggerFor(pushStack) }, { lang, timeoutMs });
       const hasText = Boolean(result.text.trim());
       const business = {
         BUSINESS_DECISION: `TEXT_DETECTED=${hasText ? "YES" : "NO"}`,
@@ -740,7 +742,7 @@ function AudioToTextDebug() {
         business_reason: hasText ? "Browser SpeechRecognition returned text." : "Browser SpeechRecognition returned no text or failed.",
         send_to_ai: "NO_NOT_THIS_FUNCTION",
         method: "SYSTEM_AUDIO_TO_TEXT",
-        note: "Browser helper only. Not AI transcription and not pronunciation analysis."
+        note: "DEBUG PAGE BUSINESS OBJECT. Real method output is output.status + output.text + output.note. Browser helper only. Not AI transcription and not pronunciation analysis."
       };
       updateStack(id, {
         status: result.status.ok ? "ok" : "error",
@@ -774,6 +776,7 @@ function AudioToTextDebug() {
             <input value={lang} onChange={(event) => setLang(event.target.value)} />
             <small>Browser SpeechRecognition language hint. It is not AI language detection.</small>
           </label>
+          <NumberField label="timeoutMs" value={timeoutMs} min={1000} step={500} onChange={setTimeoutMs} note="Maximum wait. Without this, some browsers can keep listening forever." />
           <button className="run-button" type="button" onClick={() => void runListen()} disabled={running}>{running ? "Listening..." : "Listen for browser text"}</button>
         </>
       )}

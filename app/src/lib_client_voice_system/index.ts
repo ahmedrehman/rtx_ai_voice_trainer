@@ -20,6 +20,7 @@ type BrowserSpeechRecognition = {
   abort: () => void;
   onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
   onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
 };
 
 type BrowserSpeechRecognitionEvent = {
@@ -127,6 +128,7 @@ export type SystemTextToAudioOutput = {
 
 export type SystemAudioToTextInput = {
   lang?: string;
+  timeoutMs?: number;
 };
 
 export type SystemAudioToTextOutput = {
@@ -462,7 +464,8 @@ export async function SYSTEM_TEXT_TO_AUDIO(config: ClientVoiceConfig, input: Sys
 
 export async function SYSTEM_AUDIO_TO_TEXT(config: ClientVoiceConfig, input: SystemAudioToTextInput = {}): Promise<SystemAudioToTextOutput> {
   const startedAt = new Date().toISOString();
-  log(config, "info", "SYSTEM_AUDIO_TO_TEXT", "start", { note: "browser speech recognition only" });
+  const timeoutMs = input.timeoutMs ?? 6000;
+  log(config, "info", "SYSTEM_AUDIO_TO_TEXT", "start", { note: "browser speech recognition only", timeoutMs });
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Recognition) {
     const error = new Error("client browser speech recognition not available");
@@ -472,22 +475,56 @@ export async function SYSTEM_AUDIO_TO_TEXT(config: ClientVoiceConfig, input: Sys
 
   return new Promise((resolve) => {
     const recognition = new Recognition();
+    let finished = false;
+    let text = "";
+    let timeout: number | undefined;
+
+    function finish(output: SystemAudioToTextOutput) {
+      if (finished) return;
+      finished = true;
+      if (timeout) window.clearTimeout(timeout);
+      try {
+        recognition.abort();
+      } catch {
+        // Browser cleanup only.
+      }
+      resolve(output);
+    }
+
     recognition.lang = input.lang || "fr-FR";
     recognition.continuous = false;
     recognition.interimResults = false;
     recognition.onresult = (event: BrowserSpeechRecognitionEvent) => {
-      let text = "";
       for (let index = event.resultIndex; index < event.results.length; index += 1) {
         text += event.results[index][0].transcript;
       }
-      resolve({ status: doneStatus("SYSTEM_AUDIO_TO_TEXT", startedAt), text: text.trim(), note: "browser_speech_recognition_only" });
+      finish({ status: doneStatus("SYSTEM_AUDIO_TO_TEXT", startedAt), text: text.trim(), note: "browser_speech_recognition_only" });
     };
     recognition.onerror = (event: { error: string }) => {
       const error = new Error(`client browser speech recognition failed: ${event.error}`);
       log(config, "error", "SYSTEM_AUDIO_TO_TEXT", error.message);
-      resolve({ status: errorStatus("SYSTEM_AUDIO_TO_TEXT", startedAt, error), text: "", note: "browser_speech_recognition_only" });
+      finish({ status: errorStatus("SYSTEM_AUDIO_TO_TEXT", startedAt, error), text: "", note: "browser_speech_recognition_only" });
     };
-    recognition.start();
+    recognition.onend = () => {
+      if (text.trim()) {
+        finish({ status: doneStatus("SYSTEM_AUDIO_TO_TEXT", startedAt), text: text.trim(), note: "browser_speech_recognition_only" });
+        return;
+      }
+      const error = new Error("client browser speech recognition ended without text");
+      log(config, "error", "SYSTEM_AUDIO_TO_TEXT", error.message);
+      finish({ status: errorStatus("SYSTEM_AUDIO_TO_TEXT", startedAt, error), text: "", note: "browser_speech_recognition_only" });
+    };
+    timeout = window.setTimeout(() => {
+      const error = new Error(`client browser speech recognition timed out after ${timeoutMs}ms`);
+      log(config, "error", "SYSTEM_AUDIO_TO_TEXT", error.message);
+      finish({ status: errorStatus("SYSTEM_AUDIO_TO_TEXT", startedAt, error), text: "", note: "browser_speech_recognition_only" });
+    }, timeoutMs);
+    try {
+      recognition.start();
+    } catch (error) {
+      log(config, "error", "SYSTEM_AUDIO_TO_TEXT", error instanceof Error ? error.message : "browser speech recognition start failed");
+      finish({ status: errorStatus("SYSTEM_AUDIO_TO_TEXT", startedAt, error), text: "", note: "browser_speech_recognition_only" });
+    }
   });
 }
 

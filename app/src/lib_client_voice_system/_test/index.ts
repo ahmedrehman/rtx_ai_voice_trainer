@@ -44,8 +44,8 @@ export const CLIENT_VOICE_SYSTEM_TESTS: ClientVoiceSystemTest[] = [
     id: "SYSTEM_AUDIO_TO_TEXT",
     title: "Browser speech checker",
     role: "browser speech -> text",
-    input: ["microphone", "browser SpeechRecognition"],
-    output: ["text"],
+    input: ["microphone", "browser SpeechRecognition", "timeoutMs"],
+    output: ["status", "text", "note"],
     prompt: "none"
   },
   {
@@ -128,7 +128,8 @@ export const CLIENT_VOICE_SYSTEM_DEBUG_PAGES: DebugPageDefinition[] = [
     role: "browser SpeechRecognition checker -> text",
     ready: true,
     inputs: [
-      { key: "lang", label: "lang", kind: "text", defaultValue: "fr-FR" }
+      { key: "lang", label: "lang", kind: "text", defaultValue: "fr-FR" },
+      { key: "timeoutMs", label: "timeoutMs", kind: "number", defaultValue: 6000 }
     ],
     actions: [{ id: "audio", label: "Listen with browser checker", requiresAudio: true }],
     output: ["status", "text", "note"]
