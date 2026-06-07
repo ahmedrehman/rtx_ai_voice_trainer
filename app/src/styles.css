@@ -282,6 +282,23 @@ p {
   padding-bottom: 2px;
 }
 
+.topic-select {
+  display: grid;
+  gap: 3px;
+  min-width: min(260px, 52vw);
+}
+
+.topic-select span {
+  color: #777777;
+  font-size: 0.7rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.topic-select select {
+  min-height: 38px;
+}
+
 .toggle,
 .run-button,
 .secondary-button {
@@ -335,6 +352,42 @@ p {
   font-weight: 800;
 }
 
+.app-signal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid #dedede;
+  border-radius: 8px;
+  color: #555555;
+  background: #fafafa;
+}
+
+.app-signal strong {
+  color: #242424;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
+.app-signal.ok {
+  border-color: #b9dfc5;
+  color: #20633a;
+  background: #f3fbf5;
+}
+
+.app-signal.improvement {
+  border-color: #f3c36f;
+  color: #744400;
+  background: #fff8e9;
+}
+
+.app-signal.error {
+  border-color: #e6a0a0;
+  color: #8a1111;
+  background: #fff7f7;
+}
+
 .chat-window {
   display: flex;
   flex-direction: column;
@@ -386,7 +439,7 @@ p {
 
 .chat-composer {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr auto;
   gap: 8px;
 }
 
@@ -397,6 +450,23 @@ p {
 
 .chat-shell audio {
   width: 100%;
+}
+
+.voice-app:not(.debug-version) .chat-message span {
+  display: none;
+}
+
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #454545;
+  font-size: 0.9rem;
+}
+
+.check-row input {
+  width: 18px;
+  height: 18px;
 }
 
 .empty-panel {

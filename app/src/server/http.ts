@@ -1,7 +1,7 @@
 import type { Env } from "./bindings";
 import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "../mod_ai_calls";
 import { createAudioTurnDefaultPrompts } from "../lib_server_ai_voice";
-import { VOICE_AGENT_BACKEND, type VoiceAgentServerAnalyseRequest } from "../voice_agent";
+import { VOICE_AGENT_BACKEND, type VoiceAgentServerAnalyseRequest, type VoiceAgentTextChatRequest } from "../voice_agent";
 import { clearCostLedger, getCostLedger, listProviders, runCorrection } from "./app";
 import { json, methodNotAllowed, notFound } from "./responses";
 
@@ -45,6 +45,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (pathname === "/api/audio-analyser") {
       if (request.method !== "POST") return methodNotAllowed();
       return json(await realMethod(request, env));
+    }
+
+    if (pathname === "/api/voice-agent/text-chat") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return json(await voiceAgentTextChat(request, env));
     }
 
     if (pathname.startsWith("/api/")) {
@@ -151,6 +156,26 @@ async function audioTurn(request: Request, env: Env) {
       prompt
     }
   ));
+}
+
+async function voiceAgentTextChat(request: Request, env: Env) {
+  if (!env.OPENAI_API_KEY) {
+    return { error: "VOICE_AGENT_TEXT_CHAT is not connected." };
+  }
+
+  const body = await request.json() as VoiceAgentTextChatRequest;
+  const settings = VOICE_AGENT_BACKEND.CREATE_SERVER_SETTINGS(body);
+  return VOICE_AGENT_BACKEND.TEXT_CHAT(
+    {
+      provider: "openai",
+      implementation: "openai-audio",
+      openAiApiKey: env.OPENAI_API_KEY,
+      textModel: "gpt-4.1-mini",
+      ttsModel: "gpt-4o-mini-tts",
+      voice: settings.voice
+    },
+    body
+  );
 }
 
 async function realMethod(request: Request, env: Env) {

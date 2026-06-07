@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Archive, BookOpen, Bug, Database, FileAudio, Home, Menu, MessageSquare, Mic, Server, Volume2, X } from "lucide-react";
+import { Archive, BookOpen, Bug, Database, FileAudio, Menu, MessageSquare, Mic, Server, Volume2, X } from "lucide-react";
 import type { DebugPageDefinition } from "./debug_page_types";
 import {
   SYSTEM_AUDIO_ENERGY_CHECK,
@@ -25,6 +25,7 @@ import {
   VOICE_AGENT_PLAY_AUDIO,
   VOICE_AGENT_RECORD_CHUNK,
   VOICE_AGENT_SAMPLE_AUDIO_URL,
+  VOICE_AGENT_SEND_TEXT_CHAT,
   VOICE_AGENT_TOPIC_PRESETS,
   type VoiceAgentChatMessage,
   type VoiceAgentPromptConfig,
@@ -33,7 +34,7 @@ import {
 import "./styles.css";
 
 type Page = Omit<DebugPageDefinition, "module"> & {
-  module: DebugPageDefinition["module"] | "App";
+  module: DebugPageDefinition["module"] | "App" | "Debug";
   icon: React.ComponentType<{ size?: number }>;
 };
 
@@ -53,10 +54,10 @@ const localDebugDataStore = createLocalMemoryDataStore();
 const DEFAULT_TEST_AUDIO_URL = "/test-audio/sample-voice-test.wav";
 
 const pages: Page[] = [
-  { id: "start", title: "Start", module: "Client Voice", role: "start page", ready: true, inputs: [], actions: [], output: [], icon: Home },
   { id: "APP_CHAT", title: "App", module: "App", role: "voice trainer chat with listen and speak controls", ready: true, inputs: [], actions: [], output: [], icon: MessageSquare },
-  { id: "APP_FULL_TEST", title: "Full app test", module: "App", role: "same app flow with full business/debug details", ready: true, inputs: [], actions: [], output: [], icon: Bug },
   { id: "VOICE_AGENT_CONFIG", title: "Voice agent config", module: "App", role: "client topic and prompt configuration", ready: true, inputs: [], actions: [], output: [], icon: Server },
+  { id: "APP_FULL_TEST", title: "Full app test", module: "Debug", role: "same app flow with full business/debug details", ready: true, inputs: [], actions: [], output: [], icon: Bug },
+  { id: "VOICE_AGENT_TEXT_CHAT_TEST", title: "Voice agent text chat", module: "Debug", role: "typed text + prompts -> JSON chat answer and optional audio", ready: true, inputs: [], actions: [], output: [], icon: MessageSquare },
   ...CLIENT_VOICE_SYSTEM_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   ...SERVER_AI_VOICE_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   ...DATA_STORE_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) }))
@@ -72,13 +73,13 @@ function iconForPage(page: DebugPageDefinition) {
 }
 
 function App() {
-  const [activePageId, setActivePageId] = useState("start");
+  const [activePageId, setActivePageId] = useState("APP_CHAT");
   const [menuOpen, setMenuOpen] = useState(false);
   const [debugMenuOpen, setDebugMenuOpen] = useState(false);
   const [voiceAgentSettings, setVoiceAgentSettings] = useState<VoiceAgentSettings>(VOICE_AGENT_DEFAULT_SETTINGS);
   const activePage = pages.find((page) => page.id === activePageId) || pages[0];
   const debugGroups = useMemo(() => {
-    return pages.filter((page) => page.id !== "start" && page.module !== "App").reduce<Record<string, Page[]>>((result, page) => {
+    return pages.filter((page) => page.module !== "App").reduce<Record<string, Page[]>>((result, page) => {
       result[page.module] = [...(result[page.module] || []), page];
       return result;
     }, {});
@@ -120,10 +121,6 @@ function App() {
         <nav className="nav-list">
           <section>
             <h2>App</h2>
-            <button className={activePage.id === "start" ? "active" : ""} onClick={() => selectPage("start")}>
-              <Home size={17} />
-              <span>Start</span>
-            </button>
             {appPages.map((page) => {
               const Icon = page.icon;
               return (
@@ -178,7 +175,7 @@ function PageView({
   if (page.id === "APP_CHAT") {
     return (
       <article className="page app-page">
-        <AppVoiceExperience debug={false} settings={voiceAgentSettings} />
+        <AppVoiceExperience debug={false} settings={voiceAgentSettings} setSettings={setVoiceAgentSettings} />
       </article>
     );
   }
@@ -191,7 +188,8 @@ function PageView({
       </div>
       <h1>{page.title}</h1>
       <p>{page.role}</p>
-      {page.id === "APP_FULL_TEST" && <AppVoiceExperience debug settings={voiceAgentSettings} />}
+      {page.id === "APP_FULL_TEST" && <AppVoiceExperience debug settings={voiceAgentSettings} setSettings={setVoiceAgentSettings} />}
+      {page.id === "VOICE_AGENT_TEXT_CHAT_TEST" && <VoiceAgentTextChatTestPage settings={voiceAgentSettings} />}
       {page.id === "VOICE_AGENT_CONFIG" && <VoiceAgentConfigPage settings={voiceAgentSettings} setSettings={setVoiceAgentSettings} />}
       {page.id === "MICROPHONE_AUDIO_REQUIREMENTS" && <MicrophoneDocs />}
       {page.id === "SYSTEM_MEANINGFUL_AUDIO_CHUNK" && <MeaningfulAudioChunkDebug />}
@@ -207,6 +205,7 @@ function PageView({
         "APP_CHAT",
         "APP_FULL_TEST",
         "VOICE_AGENT_CONFIG",
+        "VOICE_AGENT_TEXT_CHAT_TEST",
         "SYSTEM_MEANINGFUL_AUDIO_CHUNK",
         "SYSTEM_AUDIO_ENERGY_CHECK",
         "SYSTEM_MICRO_TO_AUDIO",
@@ -228,14 +227,23 @@ function PageView({
   );
 }
 
-function AppVoiceExperience({ debug, settings }: { debug: boolean; settings: VoiceAgentSettings }) {
+function AppVoiceExperience({
+  debug,
+  settings,
+  setSettings
+}: {
+  debug: boolean;
+  settings: VoiceAgentSettings;
+  setSettings: React.Dispatch<React.SetStateAction<VoiceAgentSettings>>;
+}) {
   const [messages, setMessages] = useState<VoiceAgentChatMessage[]>([
-    { id: createId(), role: "assistant", text: `Topic: ${settings.topic}. Say "${settings.keywordOn}" to talk, "${settings.keywordOff}" to stop.`, createdAt: new Date().toISOString() }
+    { id: createId(), role: "assistant", text: `${settings.languageName} practice is ready.`, createdAt: new Date().toISOString() }
   ]);
   const [textUserChat, setTextUserChat] = useState("");
   const [listenEnabled, setListenEnabled] = useState(false);
-  const [speakEnabled, setSpeakEnabled] = useState(true);
+  const [speakEnabled, setSpeakEnabled] = useState(false);
   const [running, setRunning] = useState(false);
+  const [lastSignal, setLastSignal] = useState<{ type: "idle" | "ok" | "improvement" | "error"; text: string }>({ type: "idle", text: "Ready" });
   const [lastAudioUrl, setLastAudioUrl] = useState("");
   const stopListenRef = useRef(false);
   const { stack, pushStack, updateStack } = useDebugStack();
@@ -243,20 +251,82 @@ function AppVoiceExperience({ debug, settings }: { debug: boolean; settings: Voi
   useEffect(() => {
     const message: VoiceAgentChatMessage = {
       id: createId(),
-      role: "system",
-      text: `Topic changed: ${settings.topic}`,
+      role: "assistant",
+      text: `${settings.languageName} practice is ready.`,
       createdAt: new Date().toISOString()
     };
-    setMessages((current) => [
-      ...current,
-      message
-    ].slice(-30));
-  }, [settings.topic]);
+    setMessages([message]);
+    setLastSignal({ type: "idle", text: "Ready" });
+  }, [settings.topic, settings.languageName]);
 
   async function runWithSampleAudio() {
     const response = await fetch(VOICE_AGENT_SAMPLE_AUDIO_URL);
     const audio = await response.blob();
     await analyseAudio(audio, "sample audio file");
+  }
+
+  async function sendTextChat() {
+    const userText = textUserChat.trim();
+    if (!userText || running) return;
+    const userMessage: VoiceAgentChatMessage = { id: createId(), role: "user", text: userText, createdAt: new Date().toISOString() };
+    const history = [...messages, userMessage].slice(-5).map((message) => `${message.role}: ${message.text}`);
+    setMessages((current) => [...current, userMessage].slice(-30));
+    setTextUserChat("");
+    setRunning(true);
+    setLastSignal({ type: "idle", text: "Sending..." });
+    const id = debug ? pushStack({
+      type: "VOICE_AGENT_TEXT_CHAT",
+      status: "running",
+      input: { settings, textUserChat: userText, history5LastTextChats: history, speakEnabled },
+      steps: [
+        { label: "Build text request", state: "done", detail: "Typed chat text, topic, prompts, history, and speak toggle are captured." },
+        { label: "Call VOICE_AGENT_TEXT_CHAT", state: "running", detail: "POST /api/voice-agent/text-chat is in progress." },
+        { label: "Evaluate answer", state: "pending", detail: "Waiting for JSON chat result." }
+      ]
+    }) : "";
+
+    try {
+      const result = await VOICE_AGENT_SEND_TEXT_CHAT({
+        settings,
+        textUserChat: userText,
+        history5LastTextChats: history,
+        speakEnabled
+      });
+      const assistantMessage = result.chatMessage;
+      if (assistantMessage) setMessages((current) => [...current, assistantMessage].slice(-30));
+      const resultJson = isVoiceAgentTextChatResponse(result.response) ? result.response.json : null;
+      if (result.status.ok && resultJson?.flags.has_corrections) {
+        setLastSignal({ type: "improvement", text: `Improvement: ${resultJson.flags.correction_type}` });
+      } else if (result.status.ok) {
+        setLastSignal({ type: "ok", text: "Answer ready" });
+      } else {
+        setLastSignal({ type: "error", text: result.status.error || "Text chat failed" });
+      }
+      if (speakEnabled && result.audio) {
+        const playResult = await VOICE_AGENT_PLAY_AUDIO({}, result.audio);
+        if (lastAudioUrl) URL.revokeObjectURL(lastAudioUrl);
+        setLastAudioUrl(URL.createObjectURL(base64ToBlob(result.audio.audioBase64, result.audio.audioFormat)));
+        if (!playResult.played) setLastSignal({ type: "error", text: "Audio returned, but browser playback failed" });
+      }
+      if (debug && id) {
+        updateStack(id, {
+          status: result.status.ok ? "ok" : "error",
+          steps: [
+            { label: "Build text request", state: "done", detail: "Typed chat text, topic, prompts, history, and speak toggle are captured." },
+            { label: "Call VOICE_AGENT_TEXT_CHAT", state: result.status.ok ? "done" : "error", detail: result.status.ok ? "Server returned a text-chat result." : String(result.status.error || "Text chat failed.") },
+            { label: `Business result: ${result.status.ok ? resultJson?.flags.has_corrections ? "IMPROVEMENT" : "ANSWER" : "ERROR"}`, state: result.status.ok ? "done" : "error", detail: result.status.ok ? (resultJson?.chat_text_to_user || "Answer returned.") : String(result.status.error || "Text chat failed.") }
+          ],
+          output: result,
+          error: result.status.error
+        });
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLastSignal({ type: "error", text: message });
+      if (debug && id) updateStack(id, { status: "error", steps: [{ label: "Run text chat", state: "error", detail: message }], error: message });
+    } finally {
+      setRunning(false);
+    }
   }
 
   async function analyseAudio(audio: Blob, source: string) {
@@ -297,6 +367,14 @@ function AppVoiceExperience({ debug, settings }: { debug: boolean; settings: Voi
         history5LastTextChats: messages.slice(-5).map((message) => `${message.role}: ${message.text}`)
       });
       if (result.chatMessage) setMessages((current) => [...current, result.chatMessage as VoiceAgentChatMessage].slice(-30));
+      const resultJson = isAudioAnalyserResponse(result.response) ? result.response.json : null;
+      if (result.status.ok && resultJson?.flags.has_corrections) {
+        setLastSignal({ type: "improvement", text: `Improvement: ${resultJson.flags.correction_type}` });
+      } else if (result.status.ok) {
+        setLastSignal({ type: "ok", text: "Answer ready" });
+      } else {
+        setLastSignal({ type: "error", text: result.status.error || "Audio analysis failed" });
+      }
       let played = false;
       if (speakEnabled && result.audio) {
         const playResult = await VOICE_AGENT_PLAY_AUDIO({}, result.audio);
@@ -387,6 +465,12 @@ function AppVoiceExperience({ debug, settings }: { debug: boolean; settings: Voi
     <section className={debug ? "voice-app debug-version" : "voice-app"}>
       <div className="chat-shell">
         <div className="chat-toolbar">
+          <label className="topic-select">
+            <span>Topic</span>
+            <select value={settings.topicId} onChange={(event) => setSettings((current) => VOICE_AGENT_CREATE_SETTINGS(event.target.value as VoiceAgentSettings["topicId"], current))}>
+              {VOICE_AGENT_TOPIC_PRESETS.map((topic) => <option value={topic.id} key={topic.id}>{topic.label}</option>)}
+            </select>
+          </label>
           <button className={listenEnabled ? "toggle active" : "toggle"} type="button" onClick={toggleListen}>
             <Mic size={17} />
             <span>{listenEnabled ? "Listening" : "Listen"}</span>
@@ -395,9 +479,14 @@ function AppVoiceExperience({ debug, settings }: { debug: boolean; settings: Voi
             <Volume2 size={17} />
             <span>{speakEnabled ? "Speak on" : "Speak off"}</span>
           </button>
-          <span className="topic-pill">{settings.topic}</span>
-          <span className="topic-pill">on: {settings.keywordOn}</span>
-          <span className="topic-pill">off: {settings.keywordOff}</span>
+          {debug && <span className="topic-pill">{settings.topic}</span>}
+          {debug && <span className="topic-pill">on: {settings.keywordOn}</span>}
+          {debug && <span className="topic-pill">off: {settings.keywordOff}</span>}
+        </div>
+
+        <div className={`app-signal ${lastSignal.type}`}>
+          <strong>{lastSignal.type === "improvement" ? "Has improvement" : lastSignal.type === "error" ? "Has error" : lastSignal.type === "ok" ? "Ready answer" : "Status"}</strong>
+          <span>{lastSignal.text}</span>
         </div>
 
         <div className="chat-window">
@@ -412,10 +501,15 @@ function AppVoiceExperience({ debug, settings }: { debug: boolean; settings: Voi
         {lastAudioUrl && <audio controls src={lastAudioUrl} />}
 
         <div className="chat-composer">
-          <textarea value={textUserChat} onChange={(event) => setTextUserChat(event.target.value)} rows={2} placeholder="Type chat text to send with the next audio..." />
-          <button className="run-button" type="button" onClick={() => void runWithSampleAudio()} disabled={running}>
-            {running ? "Running..." : "Test with sample audio"}
+          <textarea value={textUserChat} onChange={(event) => setTextUserChat(event.target.value)} rows={2} placeholder="Type a message..." />
+          <button className="run-button" type="button" onClick={() => void sendTextChat()} disabled={running || !textUserChat.trim()}>
+            {running ? "Sending..." : "Send"}
           </button>
+          {debug && (
+            <button className="secondary-button" type="button" onClick={() => void runWithSampleAudio()} disabled={running}>
+              Test with sample audio
+            </button>
+          )}
         </div>
       </div>
 
@@ -433,6 +527,103 @@ function AppVoiceExperience({ debug, settings }: { debug: boolean; settings: Voi
           {stack.length === 0 ? <p>No app flow run yet.</p> : stack.map((item) => <StackArticle item={item} key={item.id} />)}
         </section>
       )}
+    </section>
+  );
+}
+
+function isAudioAnalyserResponse(value: unknown): value is { json: { flags: { has_corrections: boolean; correction_type: string }; chat_text_to_user: string } } {
+  return Boolean(value && typeof value === "object" && "json" in value);
+}
+
+function isVoiceAgentTextChatResponse(value: unknown): value is { json: { flags: { has_corrections: boolean; correction_type: string }; chat_text_to_user: string } } {
+  return Boolean(value && typeof value === "object" && "json" in value);
+}
+
+function safeJsonArray(text: string): string[] {
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed.map((item) => typeof item === "string" ? item : JSON.stringify(item)).slice(-5) : [];
+  } catch {
+    return [];
+  }
+}
+
+function VoiceAgentTextChatTestPage({ settings }: { settings: VoiceAgentSettings }) {
+  const [textUserChat, setTextUserChat] = useState("Bonjour, je veux pratiquer le francais.");
+  const [historyText, setHistoryText] = useState("[]");
+  const [speakEnabled, setSpeakEnabled] = useState(false);
+  const prompts = VOICE_AGENT_CREATE_PROMPTS(settings);
+  const { stack, pushStack, updateStack } = useDebugStack();
+  const [running, setRunning] = useState(false);
+
+  async function runTextChatTest() {
+    const history = safeJsonArray(historyText);
+    const input = {
+      settings,
+      textUserChat,
+      history5LastTextChats: history,
+      speakEnabled,
+      promptConfig: prompts
+    };
+    const id = pushStack({
+      type: "VOICE_AGENT_TEXT_CHAT",
+      status: "running",
+      input,
+      steps: [
+        { label: "Build request", state: "done", detail: "Text, topic settings, history, prompts, and speak toggle are visible on this page." },
+        { label: "Call server endpoint", state: "running", detail: "POST /api/voice-agent/text-chat." },
+        { label: "Read output JSON", state: "pending", detail: "Waiting for flags, chat_text_to_user, text_corrected, and hint." }
+      ]
+    });
+    setRunning(true);
+    try {
+      const result = await VOICE_AGENT_SEND_TEXT_CHAT({
+        settings,
+        textUserChat,
+        history5LastTextChats: history,
+        speakEnabled
+      });
+      const responseJson = isVoiceAgentTextChatResponse(result.response) ? result.response.json : null;
+      updateStack(id, {
+        status: result.status.ok ? "ok" : "error",
+        steps: [
+          { label: "Build request", state: "done", detail: "Text, topic settings, history, prompts, and speak toggle are visible on this page." },
+          { label: "Call server endpoint", state: result.status.ok ? "done" : "error", detail: result.status.ok ? "Server returned status ok." : String(result.status.error || "Request failed.") },
+          { label: `Business result: ${result.status.ok ? responseJson?.flags.has_corrections ? "HAS IMPROVEMENT" : "ANSWER ONLY" : "ERROR"}`, state: result.status.ok ? "done" : "error", detail: result.status.ok ? (responseJson?.chat_text_to_user || "No chat text returned.") : String(result.status.error || "Text chat failed.") }
+        ],
+        output: result,
+        error: result.status.error
+      });
+    } catch (error) {
+      updateStack(id, {
+        status: "error",
+        steps: [{ label: "Run text-chat test", state: "error", detail: error instanceof Error ? error.message : String(error) }],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <section className="debug-method">
+      <div className="debug-grid">
+        <section className="method-panel">
+          <h2>Inputs</h2>
+          <label className="field"><span>textUserChat</span><textarea value={textUserChat} onChange={(event) => setTextUserChat(event.target.value)} rows={4} /><small>Typed user message. No microphone audio is used in this method.</small></label>
+          <label className="field"><span>history5LastTextChats</span><textarea value={historyText} onChange={(event) => setHistoryText(event.target.value)} rows={4} /><small>JSON array of previous text chat messages.</small></label>
+          <label className="check-row"><input type="checkbox" checked={speakEnabled} onChange={(event) => setSpeakEnabled(event.target.checked)} /> <span>also return spoken audio from chat_text_to_user</span></label>
+          <button className="run-button" type="button" onClick={() => void runTextChatTest()} disabled={running || !textUserChat.trim()}>{running ? "Running..." : "Run text chat"}</button>
+        </section>
+        <section className="method-panel">
+          <h2>Prompts Sent</h2>
+          <label className="field"><span>systemPrompt</span><textarea value={prompts.systemPrompt} readOnly rows={5} /></label>
+          <label className="field"><span>task</span><textarea value={prompts.task} readOnly rows={8} /></label>
+          <label className="field"><span>howToRespond</span><textarea value={prompts.howToRespond} readOnly rows={4} /></label>
+          <label className="field"><span>responseJsonFormat</span><textarea value={prompts.responseJsonFormat} readOnly rows={8} /></label>
+        </section>
+      </div>
+      {stack.length === 0 ? <p>No text-chat test run yet.</p> : stack.map((item) => <StackArticle item={item} key={item.id} />)}
     </section>
   );
 }

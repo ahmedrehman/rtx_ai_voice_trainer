@@ -5,7 +5,7 @@ import { networkInterfaces } from "node:os";
 import { createServer as createViteServer } from "vite";
 import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "./mod_ai_calls";
 import { createAudioTurnDefaultPrompts } from "./lib_server_ai_voice";
-import { VOICE_AGENT_BACKEND, type VoiceAgentServerAnalyseRequest } from "./voice_agent";
+import { VOICE_AGENT_BACKEND, type VoiceAgentServerAnalyseRequest, type VoiceAgentTextChatRequest } from "./voice_agent";
 import type { Env } from "./server/bindings";
 import { clearCostLedger, getCostLedger, listProviders, runCorrection } from "./server/app";
 import { openLocalCostDb } from "./server/localDb";
@@ -135,10 +135,40 @@ async function handleApi(request: IncomingMessage, response: ServerResponse) {
       return;
     }
 
+    if (url.pathname === "/api/voice-agent/text-chat" && request.method === "POST") {
+      sendJson(response, await voiceAgentTextChat(request));
+      return;
+    }
+
     sendJson(response, { error: "Not found" }, 404);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected server error";
     sendJson(response, { error: message }, 500);
+  }
+}
+
+async function voiceAgentTextChat(request: IncomingMessage) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return { error: "VOICE_AGENT_TEXT_CHAT is not connected." };
+  }
+
+  const body = JSON.parse((await readBuffer(request)).toString("utf8")) as VoiceAgentTextChatRequest;
+  const settings = VOICE_AGENT_BACKEND.CREATE_SERVER_SETTINGS(body);
+  try {
+    return await VOICE_AGENT_BACKEND.TEXT_CHAT(
+      {
+        provider: "openai",
+        implementation: "openai-audio",
+        openAiApiKey: apiKey,
+        textModel: "gpt-4.1-mini",
+        ttsModel: "gpt-4o-mini-tts",
+        voice: settings.voice
+      },
+      body
+    );
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "VOICE_AGENT_TEXT_CHAT failed" };
   }
 }
 
