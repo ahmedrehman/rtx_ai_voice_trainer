@@ -110,6 +110,7 @@ export type AudioToAiTextAndAudioOutput = {
 export type AudioAnalyserInput = {
   provider: ServerAiProvider;
   systemPrompt: {
+    systemPrompt?: string;
     task: string;
     responseJsonFormat: string;
     howToRespond: string;
@@ -296,6 +297,7 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
   log(config, "info", "AUDIO_ANALYSER", "start", summarize(withoutAnalyserAudio(input)));
 
   const systemPrompt = [
+    input.systemPrompt.systemPrompt,
     input.systemPrompt.task,
     input.systemPrompt.howToRespond,
     "Use the original microphone audio. Judge pronunciation and accent from the sound.",

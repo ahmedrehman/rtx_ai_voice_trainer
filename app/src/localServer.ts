@@ -289,7 +289,8 @@ async function realMethod(request: IncomingMessage) {
       {
         provider: "openai",
         systemPrompt: {
-          task: [body.systemPrompt || defaultPrompts.systemPrompt, promptConfig.systemTask || defaultPrompts.task].filter(Boolean).join("\n"),
+          systemPrompt: body.systemPrompt || defaultPrompts.systemPrompt,
+          task: promptConfig.systemTask || defaultPrompts.task,
           responseJsonFormat: promptConfig.responseJsonFormat || defaultPrompts.responseJsonFormat,
           howToRespond: [body.additionalInstructions, promptConfig.howToRespond || defaultPrompts.howToRespond].filter(Boolean).join("\n")
         },
