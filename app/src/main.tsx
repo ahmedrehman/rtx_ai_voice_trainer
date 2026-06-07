@@ -10,6 +10,8 @@ import {
   SYSTEM_MICRO_TO_AUDIO,
   SYSTEM_TEXT_TO_AUDIO
 } from "./lib_client_voice_system";
+import { createLocalMemoryDataStore } from "./lib_data_store";
+import type { DataStoreRecordType } from "./lib_data_store";
 import { CLIENT_VOICE_SYSTEM_DEBUG_PAGES } from "./lib_client_voice_system/_test";
 import { DATA_STORE_DEBUG_PAGES } from "./lib_data_store/_test";
 import { SERVER_AI_VOICE_DEBUG_PAGES } from "./lib_server_ai_voice/_test";
@@ -30,6 +32,8 @@ type StackItem = {
   output?: unknown;
   error?: unknown;
 };
+
+const localDebugDataStore = createLocalMemoryDataStore();
 
 const pages: Page[] = [
   { id: "start", title: "Start", module: "Client Voice", role: "start page", ready: true, inputs: [], actions: [], output: [], icon: Home },
@@ -144,6 +148,8 @@ function PageView({ page }: { page: Page }) {
       {page.id === "SYSTEM_AUDIO_TO_TEXT" && <AudioToTextDebug />}
       {page.id === "SYSTEM_TEXT_TO_AUDIO" && <TextToAudioDebug />}
       {page.id === "SYSTEM_AUDIO_TO_SPEAKER" && <AudioToSpeakerDebug />}
+      {["PRIMITIVE_TEXT_TO_AUDIO", "PRIMITIVE_AUDIO_TO_TEXT", "AUDIO_TO_AI_TEXT_AND_AUDIO", "AUDIO_ANALYSER"].includes(page.id) && <ServerAiEndpointDebug methodId={page.id} />}
+      {page.module === "Data Store" && <DataStoreMethodDebug methodId={page.id} />}
       {![
         "MICROPHONE_AUDIO_REQUIREMENTS",
         "SYSTEM_MEANINGFUL_AUDIO_CHUNK",
@@ -151,7 +157,17 @@ function PageView({ page }: { page: Page }) {
         "SYSTEM_MICRO_TO_AUDIO",
         "SYSTEM_AUDIO_TO_TEXT",
         "SYSTEM_TEXT_TO_AUDIO",
-        "SYSTEM_AUDIO_TO_SPEAKER"
+        "SYSTEM_AUDIO_TO_SPEAKER",
+        "PRIMITIVE_TEXT_TO_AUDIO",
+        "PRIMITIVE_AUDIO_TO_TEXT",
+        "AUDIO_TO_AI_TEXT_AND_AUDIO",
+        "AUDIO_ANALYSER",
+        "DATA_STORE_SAVE_EVENT",
+        "DATA_STORE_LIST_EVENTS",
+        "DATA_STORE_CLEAR_EVENTS",
+        "DATA_STORE_SAVE_COST",
+        "DATA_STORE_LIST_COSTS",
+        "DATA_STORE_RESET_COSTS"
       ].includes(page.id) && <StaticPage page={page} />}
     </article>
   );
@@ -1015,6 +1031,330 @@ function loggerFor(pushStack: (item: Omit<StackItem, "id" | "createdAt">) => str
   };
 }
 
+function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
+  const [text, setText] = useState("Bonjour. Ceci est un test.");
+  const [voice, setVoice] = useState("coral");
+  const [languageName, setLanguageName] = useState("French");
+  const [style, setStyle] = useState("Speak as a calm trainer. Keep it short.");
+  const [audio, setAudio] = useState<File | null>(null);
+  const [audioUrl, setAudioUrl] = useState("");
+  const [textUserChat, setTextUserChat] = useState("Bonjour, je veux tester ma voix.");
+  const [historyText, setHistoryText] = useState("[]");
+  const [systemTask, setSystemTask] = useState("You are a French voice trainer. Judge pronunciation from original audio.");
+  const [howToRespond, setHowToRespond] = useState("Return JSON text and short spoken audio. Keep it short.");
+  const [responseJsonFormat, setResponseJsonFormat] = useState("{\n  \"flags\": {},\n  \"chat_text_to_user\": \"\",\n  \"text_corrected\": \"\",\n  \"hint\": \"\"\n}");
+  const [running, setRunning] = useState(false);
+  const [outputAudioUrl, setOutputAudioUrl] = useState("");
+  const { stack, pushStack, updateStack } = useDebugStack();
+  const endpoint = serverEndpointFor(methodId);
+  const needsAudio = methodId !== "PRIMITIVE_TEXT_TO_AUDIO";
+  const needsPrompts = methodId === "AUDIO_TO_AI_TEXT_AND_AUDIO" || methodId === "AUDIO_ANALYSER";
+
+  function selectAudio(file: File | null) {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudio(file);
+    setAudioUrl(file ? URL.createObjectURL(file) : "");
+  }
+
+  async function runServerMethod() {
+    const input = {
+      endpoint,
+      methodId,
+      text,
+      voice,
+      languageName,
+      style,
+      audio: audio ? { size: audio.size, type: audio.type, name: audio.name } : null,
+      textUserChat,
+      historyText,
+      promptConfig: needsPrompts ? { systemTask, howToRespond, responseJsonFormat } : undefined
+    };
+    const id = pushStack({
+      type: methodId,
+      status: "running",
+      input,
+      steps: [
+        { label: "Build request", state: "done", detail: `Browser prepares request for ${endpoint}.` },
+        { label: "Call server endpoint", state: "running", detail: "Request is in progress." },
+        { label: "Business decision", state: "pending", detail: "No server result yet." }
+      ]
+    });
+
+    if (needsAudio && !audio) {
+      updateStack(id, {
+        status: "error",
+        business: {
+          BUSINESS_DECISION: "SERVER_CALL=NO",
+          decision_ok: false,
+          business_reason: "Audio input is required for this server method.",
+          send_to_ai: "NO_MISSING_AUDIO"
+        },
+        error: "Audio input is required."
+      });
+      return;
+    }
+
+    setRunning(true);
+    try {
+      let response: Response;
+      if (methodId === "PRIMITIVE_TEXT_TO_AUDIO") {
+        response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, voice, languageName, style })
+        });
+      } else if (methodId === "PRIMITIVE_AUDIO_TO_TEXT") {
+        const form = new FormData();
+        form.set("file", audio as File);
+        response = await fetch(endpoint, { method: "POST", body: form });
+      } else {
+        const audioBase64 = await blobToBase64(audio as File);
+        const history5LastTextChats = parseJsonInput(historyText, []);
+        const body = methodId === "AUDIO_ANALYSER"
+          ? {
+              audioBase64,
+              audioFormat: audio?.type || "webm",
+              textUserChat,
+              history5LastTextChats,
+              voice,
+              promptConfig: { systemTask, howToRespond, responseJsonFormat }
+            }
+          : {
+              audioBase64,
+              audioFormat: audio?.type || "webm",
+              voice,
+              settings: { languageName },
+              promptConfig: { systemTask, howToRespond, responseJsonFormat }
+            };
+        response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body)
+        });
+      }
+
+      const contentType = response.headers.get("content-type") || "";
+      let output: unknown;
+      let nextAudioUrl = "";
+      if (contentType.includes("audio/")) {
+        const blob = await response.blob();
+        nextAudioUrl = URL.createObjectURL(blob);
+        output = { contentType, audio: { size: blob.size, type: blob.type } };
+      } else {
+        output = await response.json().catch(() => ({ error: "Response was not JSON." }));
+        const audioBase64 = typeof output === "object" && output && "audioBase64" in output ? String((output as { audioBase64?: unknown }).audioBase64 || "") : "";
+        if (!audioBase64 && typeof output === "object" && output && "audio" in output) {
+          const audioValue = (output as { audio?: { audioBase64?: string; audioFormat?: string } }).audio;
+          if (audioValue?.audioBase64) nextAudioUrl = URL.createObjectURL(base64ToBlob(audioValue.audioBase64, audioValue.audioFormat || "wav"));
+        } else if (audioBase64) {
+          nextAudioUrl = URL.createObjectURL(base64ToBlob(audioBase64, "wav"));
+        }
+      }
+      if (outputAudioUrl) URL.revokeObjectURL(outputAudioUrl);
+      setOutputAudioUrl(nextAudioUrl);
+
+      const errorText = typeof output === "object" && output && "error" in output ? String((output as { error?: unknown }).error || "") : "";
+      const ok = response.ok && !errorText;
+      const business = {
+        BUSINESS_DECISION: `SERVER_CALL=${ok ? "YES" : "NO"}`,
+        decision_ok: ok,
+        business_decision: ok ? "SERVER_RETURNED_RESULT" : "SERVER_ERROR_OR_NOT_CONNECTED",
+        business_reason: ok ? `Server endpoint ${endpoint} returned a result.` : errorText || `Server endpoint ${endpoint} failed.`,
+        send_to_ai: ok ? "YES_SERVER_ENDPOINT_CALLED_AI_IF_CONFIGURED" : "NO_SERVER_ERROR",
+        method: methodId,
+        endpoint,
+        note: "This debug page calls the app server endpoint. The server decides whether OpenAI is configured."
+      };
+      updateStack(id, {
+        status: ok ? "ok" : "error",
+        business,
+        output,
+        steps: [
+          { label: "Build request", state: "done", detail: `Request prepared for ${endpoint}.` },
+          { label: "Call server endpoint", state: ok ? "done" : "error", detail: ok ? "Endpoint returned without error." : String(business.business_reason) },
+          { label: "Business decision", state: ok ? "done" : "error", detail: String(business.business_reason) }
+        ],
+        error: errorText || undefined
+      });
+    } catch (error) {
+      updateStack(id, {
+        status: "error",
+        business: {
+          BUSINESS_DECISION: "SERVER_CALL=NO",
+          decision_ok: false,
+          business_reason: error instanceof Error ? error.message : String(error),
+          send_to_ai: "NO_ERROR"
+        },
+        steps: [{ label: "Run endpoint", state: "error", detail: error instanceof Error ? error.message : String(error) }],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <SimpleDebugPage
+      stack={stack}
+      outputAudioUrl={outputAudioUrl || audioUrl}
+      inputs={(
+        <>
+          <section className="not-implemented">SERVER METHOD VIA ENDPOINT: {endpoint}</section>
+          {methodId === "PRIMITIVE_TEXT_TO_AUDIO" && (
+            <>
+              <label className="field"><span>text</span><textarea value={text} onChange={(event) => setText(event.target.value)} rows={4} /><small>Text sent to server TTS endpoint.</small></label>
+              <label className="field"><span>style</span><textarea value={style} onChange={(event) => setStyle(event.target.value)} rows={3} /><small>TTS style/instructions sent to server.</small></label>
+            </>
+          )}
+          {needsAudio && (
+            <label className="field">
+              <span>audio file</span>
+              <input type="file" accept="audio/*" onChange={(event) => selectAudio(event.target.files?.[0] || null)} />
+              <small>Original audio sent to the server endpoint.</small>
+            </label>
+          )}
+          {methodId === "AUDIO_ANALYSER" && (
+            <>
+              <label className="field"><span>textUserChat</span><textarea value={textUserChat} onChange={(event) => setTextUserChat(event.target.value)} rows={3} /><small>Optional user chat text sent together with original audio.</small></label>
+              <label className="field"><span>history5LastTextChats</span><textarea value={historyText} onChange={(event) => setHistoryText(event.target.value)} rows={3} /><small>JSON array. Sent to server as history.</small></label>
+            </>
+          )}
+          {needsPrompts && (
+            <>
+              <label className="field"><span>systemTask</span><textarea value={systemTask} onChange={(event) => setSystemTask(event.target.value)} rows={4} /><small>Prompt task sent to server.</small></label>
+              <label className="field"><span>howToRespond</span><textarea value={howToRespond} onChange={(event) => setHowToRespond(event.target.value)} rows={3} /><small>Prompt response instructions sent to server.</small></label>
+              <label className="field"><span>responseJsonFormat</span><textarea value={responseJsonFormat} onChange={(event) => setResponseJsonFormat(event.target.value)} rows={5} /><small>Requested JSON shape.</small></label>
+            </>
+          )}
+          <label className="field"><span>voice</span><input value={voice} onChange={(event) => setVoice(event.target.value)} /><small>Server voice setting.</small></label>
+          <label className="field"><span>languageName</span><input value={languageName} onChange={(event) => setLanguageName(event.target.value)} /><small>Language setting for endpoint prompt.</small></label>
+          <button className="run-button" type="button" onClick={() => void runServerMethod()} disabled={running}>{running ? "Calling server..." : "Call server endpoint"}</button>
+        </>
+      )}
+    />
+  );
+}
+
+function DataStoreMethodDebug({ methodId }: { methodId: string }) {
+  const [type, setType] = useState<DataStoreRecordType | "">("debug");
+  const [scope, setScope] = useState("manual");
+  const [payloadText, setPayloadText] = useState("{\n  \"note\": \"manual debug event\"\n}");
+  const [provider, setProvider] = useState("openai");
+  const [feature, setFeature] = useState("manual-test");
+  const [amountUsd, setAmountUsd] = useState(0);
+  const [units, setUnits] = useState(1);
+  const [limit, setLimit] = useState(20);
+  const [running, setRunning] = useState(false);
+  const { stack, pushStack, updateStack } = useDebugStack();
+
+  async function runDataStore() {
+    const input = { implementation: localDebugDataStore.implementation, methodId, type, scope, payloadText, provider, feature, amountUsd, units, limit };
+    const id = pushStack({
+      type: methodId,
+      status: "running",
+      input,
+      steps: [
+        { label: "Use data-store implementation", state: "done", detail: `Implementation: ${localDebugDataStore.implementation}.` },
+        { label: "Run method", state: "running", detail: "Data-store method is running." },
+        { label: "Business decision", state: "pending", detail: "No data-store result yet." }
+      ]
+    });
+    setRunning(true);
+
+    try {
+      let result: unknown;
+      if (methodId === "DATA_STORE_SAVE_EVENT") {
+        result = await localDebugDataStore.DATA_STORE_SAVE_EVENT({ type: (type || "debug") as DataStoreRecordType, scope, payload: parseJsonInput(payloadText, {}) });
+      } else if (methodId === "DATA_STORE_LIST_EVENTS") {
+        result = await localDebugDataStore.DATA_STORE_LIST_EVENTS({ type: type || undefined, limit });
+      } else if (methodId === "DATA_STORE_CLEAR_EVENTS") {
+        result = await localDebugDataStore.DATA_STORE_CLEAR_EVENTS({ type: type || undefined });
+      } else if (methodId === "DATA_STORE_SAVE_COST") {
+        result = await localDebugDataStore.DATA_STORE_SAVE_COST({ provider, feature, amountUsd, units, payload: parseJsonInput(payloadText, {}) });
+      } else if (methodId === "DATA_STORE_LIST_COSTS") {
+        result = await localDebugDataStore.DATA_STORE_LIST_COSTS({ provider: provider || undefined, limit });
+      } else {
+        result = await localDebugDataStore.DATA_STORE_RESET_COSTS({ provider: provider || undefined });
+      }
+
+      const status = (result as { status?: { ok?: boolean; error?: string } }).status;
+      const ok = Boolean(status?.ok);
+      const business = {
+        BUSINESS_DECISION: `DATA_STORE_RESULT=${ok ? "OK" : "ERROR"}`,
+        decision_ok: ok,
+        business_decision: ok ? "DATA_STORE_METHOD_DONE" : "DATA_STORE_METHOD_ERROR",
+        business_reason: ok ? `${methodId} completed in local-memory store.` : status?.error || `${methodId} failed.`,
+        send_to_ai: "NO_DATA_STORE_ONLY",
+        method: methodId,
+        implementation: localDebugDataStore.implementation,
+        note: "This page uses local-memory store. Cloudflare D1 needs server binding and is not called from this browser page."
+      };
+      updateStack(id, {
+        status: ok ? "ok" : "error",
+        business,
+        output: result,
+        steps: [
+          { label: "Use data-store implementation", state: "done", detail: `Implementation: ${localDebugDataStore.implementation}.` },
+          { label: "Run method", state: ok ? "done" : "error", detail: String(business.business_reason) },
+          { label: "Business decision", state: ok ? "done" : "error", detail: String(business.business_reason) }
+        ],
+        error: status?.error
+      });
+    } catch (error) {
+      updateStack(id, {
+        status: "error",
+        business: {
+          BUSINESS_DECISION: "DATA_STORE_RESULT=ERROR",
+          decision_ok: false,
+          business_reason: error instanceof Error ? error.message : String(error),
+          send_to_ai: "NO_ERROR"
+        },
+        steps: [{ label: "Run method", state: "error", detail: error instanceof Error ? error.message : String(error) }],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  const isEventMethod = methodId.includes("EVENT");
+  const isCostMethod = methodId.includes("COST");
+  const isSave = methodId.includes("SAVE");
+  const isList = methodId.includes("LIST");
+
+  return (
+    <SimpleDebugPage
+      stack={stack}
+      inputs={(
+        <>
+          <section className="not-implemented">DATA STORE IMPLEMENTATION: {localDebugDataStore.implementation}</section>
+          {isEventMethod && (
+            <>
+              <label className="field"><span>type</span><select value={type} onChange={(event) => setType(event.target.value as DataStoreRecordType | "")}><option value="">all</option><option value="debug">debug</option><option value="error">error</option><option value="history">history</option><option value="payment">payment</option><option value="cost">cost</option></select><small>Event type filter or save type.</small></label>
+              {methodId === "DATA_STORE_SAVE_EVENT" && <label className="field"><span>scope</span><input value={scope} onChange={(event) => setScope(event.target.value)} /><small>Scope label for saved event.</small></label>}
+            </>
+          )}
+          {isCostMethod && (
+            <>
+              <label className="field"><span>provider</span><input value={provider} onChange={(event) => setProvider(event.target.value)} /><small>Provider filter or cost provider.</small></label>
+              {methodId === "DATA_STORE_SAVE_COST" && (
+                <>
+                  <label className="field"><span>feature</span><input value={feature} onChange={(event) => setFeature(event.target.value)} /><small>Feature/cost label.</small></label>
+                  <NumberField label="amountUsd" value={amountUsd} min={0} step={0.0001} onChange={setAmountUsd} note="Cost amount in USD." />
+                  <NumberField label="units" value={units} min={0} step={1} onChange={setUnits} note="Usage units." />
+                </>
+              )}
+            </>
+          )}
+          {isSave && <label className="field"><span>payload</span><textarea value={payloadText} onChange={(event) => setPayloadText(event.target.value)} rows={5} /><small>JSON payload saved with event/cost.</small></label>}
+          {isList && <NumberField label="limit" value={limit} min={1} step={1} onChange={setLimit} note="Maximum records returned." />}
+          <button className="run-button" type="button" onClick={() => void runDataStore()} disabled={running}>{running ? "Running..." : "Run data-store method"}</button>
+        </>
+      )}
+    />
+  );
+}
+
 function StackArticle({ item, compact = false }: { item: StackItem; compact?: boolean }) {
   const business = item.business as Record<string, unknown> | undefined;
   const businessDecision = business?.BUSINESS_DECISION_USEFUL_CHUNK !== undefined
@@ -1216,6 +1556,41 @@ function BusinessTree({
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function serverEndpointFor(methodId: string) {
+  if (methodId === "PRIMITIVE_TEXT_TO_AUDIO") return "/api/speak";
+  if (methodId === "PRIMITIVE_AUDIO_TO_TEXT") return "/api/transcribe";
+  if (methodId === "AUDIO_TO_AI_TEXT_AND_AUDIO") return "/api/audio-turn";
+  return "/api/audio-analyser";
+}
+
+async function blobToBase64(blob: Blob) {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+  return dataUrl.includes(",") ? dataUrl.split(",")[1] : dataUrl;
+}
+
+function base64ToBlob(base64: string, format: string) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  const mimeType = format.includes("/") ? format : `audio/${format || "wav"}`;
+  return new Blob([bytes], { type: mimeType });
+}
+
+function parseJsonInput<T>(text: string, fallback: T): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 function StaticPage({ page }: { page: Page }) {
