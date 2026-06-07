@@ -58,7 +58,6 @@ const DEFAULT_TEST_AUDIO_URL = "/test-audio/sample-voice-test.wav";
 const pages: Page[] = [
   { id: "APP_CHAT", title: "App", module: "App", role: "voice trainer chat with listen and speak controls", ready: true, inputs: [], actions: [], output: [], icon: MessageSquare },
   { id: "VOICE_AGENT_CONFIG", title: "Voice agent config", module: "App", role: "client topic and prompt configuration", ready: true, inputs: [], actions: [], output: [], icon: Server },
-  { id: "APP_FULL_TEST", title: "Full app test", module: "Debug", role: "same app flow with full business/debug details", ready: true, inputs: [], actions: [], output: [], icon: Bug },
   ...VOICE_AGENT_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   ...CLIENT_VOICE_SYSTEM_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   ...SERVER_AI_VOICE_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
