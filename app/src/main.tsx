@@ -1,6 +1,6 @@
 import React, { useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Activity, Archive, BookOpen, Database, FileAudio, Home, Menu, Mic, Server, Volume2, X } from "lucide-react";
+import { Archive, BookOpen, Database, FileAudio, Home, Menu, Mic, Server, Volume2, X } from "lucide-react";
 import type { DebugPageDefinition } from "./debug_page_types";
 import {
   SYSTEM_AUDIO_ENERGY_CHECK,
@@ -37,7 +37,6 @@ const localDebugDataStore = createLocalMemoryDataStore();
 
 const pages: Page[] = [
   { id: "start", title: "Start", module: "Client Voice", role: "start page", ready: true, inputs: [], actions: [], output: [], icon: Home },
-  { id: "debug", title: "Debug", module: "Client Voice", role: "debug item array display", ready: false, notReadyReason: "Global debug store is not wired yet.", inputs: [], actions: [], output: [], icon: Activity },
   ...CLIENT_VOICE_SYSTEM_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   ...SERVER_AI_VOICE_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   ...DATA_STORE_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) }))
