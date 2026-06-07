@@ -19,7 +19,7 @@ export type DebugActionDefinition = {
 export type DebugPageDefinition = {
   id: string;
   title: string;
-  module: "Client Voice" | "Server AI Voice" | "Data Store";
+  module: "Client Voice" | "Server AI Voice" | "Data Store" | "Voice Agent";
   role: string;
   ready: boolean;
   notReadyReason?: string;

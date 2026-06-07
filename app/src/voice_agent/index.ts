@@ -435,6 +435,8 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
     "You receive typed user text, topic settings, and recent text-chat history.",
     "There is no microphone audio in this method.",
     "Do not judge pronunciation or accent in text-chat mode.",
+    "Answer or correct only the latest textUserChat.",
+    "Use history only as background context; never answer, correct, or summarize an older history item unless the latest textUserChat explicitly asks about it.",
     "Return exactly one JSON object. Do not wrap it in markdown.",
     "chat_text_to_user must be non-empty and must contain the actual chat answer shown to the user."
   ].join("\n");
@@ -443,6 +445,8 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
     `Topic/context: ${settings.topic}.`,
     `Keyword ON exact word/phrase: ${settings.keywordOn}.`,
     `Keyword OFF exact word/phrase: ${settings.keywordOff}.`,
+    "LATEST USER MESSAGE is the only message to answer.",
+    "HISTORY 5 LAST TEXT CHATS is context only and must not become the answer target.",
     "If the typed message is a normal chat message, answer it normally.",
     "If the typed message has a useful language mistake, set has_corrections true and explain briefly.",
     "In text-chat mode, correction_type may be grammar, vocabulary, meaning, or none. Do not use pronunciation/accent.",

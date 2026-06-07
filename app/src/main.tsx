@@ -15,6 +15,7 @@ import type { DataStoreRecordType } from "./lib_data_store";
 import { CLIENT_VOICE_SYSTEM_DEBUG_PAGES } from "./lib_client_voice_system/_test";
 import { DATA_STORE_DEBUG_PAGES } from "./lib_data_store/_test";
 import { SERVER_AI_VOICE_DEBUG_PAGES } from "./lib_server_ai_voice/_test";
+import { VOICE_AGENT_DEBUG_PAGES } from "./voice_agent_test";
 import { AUDIO_ANALYSER_DEFAULT_PROMPTS, createAudioAnalyserDefaultPrompts } from "./lib_server_ai_voice/audioAnalyserPrompts";
 import { AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS, createAudioTurnDefaultPrompts } from "./lib_server_ai_voice/audioTurnPrompts";
 import {
@@ -57,7 +58,7 @@ const pages: Page[] = [
   { id: "APP_CHAT", title: "App", module: "App", role: "voice trainer chat with listen and speak controls", ready: true, inputs: [], actions: [], output: [], icon: MessageSquare },
   { id: "VOICE_AGENT_CONFIG", title: "Voice agent config", module: "App", role: "client topic and prompt configuration", ready: true, inputs: [], actions: [], output: [], icon: Server },
   { id: "APP_FULL_TEST", title: "Full app test", module: "Debug", role: "same app flow with full business/debug details", ready: true, inputs: [], actions: [], output: [], icon: Bug },
-  { id: "VOICE_AGENT_TEXT_CHAT_TEST", title: "Voice agent text chat", module: "Debug", role: "typed text + prompts -> JSON chat answer and optional audio", ready: true, inputs: [], actions: [], output: [], icon: MessageSquare },
+  ...VOICE_AGENT_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   ...CLIENT_VOICE_SYSTEM_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   ...SERVER_AI_VOICE_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   ...DATA_STORE_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) }))
@@ -65,6 +66,7 @@ const pages: Page[] = [
 
 function iconForPage(page: DebugPageDefinition) {
   if (page.id === "MICROPHONE_AUDIO_REQUIREMENTS") return BookOpen;
+  if (page.module === "Voice Agent") return MessageSquare;
   if (page.module === "Server AI Voice") return Server;
   if (page.module === "Data Store") return page.id.includes("CLEAR") || page.id.includes("RESET") ? Archive : Database;
   if (page.id.includes("TEXT")) return FileAudio;
