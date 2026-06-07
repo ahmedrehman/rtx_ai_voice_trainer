@@ -148,6 +148,7 @@ export async function DUMBB_TEXT_TO_SPEACH(config: AiCallConfig, request: AiSpee
 export async function RAW_AUDIO_TO_AI_TEXT_AND_AUDIO(config: AiCallConfig, request: AiAudioTurnRequest): Promise<AiAudioTurnResult> {
   const apiKey = requireOpenAiKey(config);
   if (!request.audioBase64) throw new Error("Audio AI input is empty.");
+  const audioFormat = normalizeInputAudioFormat(request.audioFormat);
 
   const attempts = request.model ? [request.model] : ["gpt-audio", "gpt-audio-1.5"];
   let lastError = "";
@@ -168,7 +169,7 @@ export async function RAW_AUDIO_TO_AI_TEXT_AND_AUDIO(config: AiCallConfig, reque
             role: "user",
             content: [
               { type: "text", text: request.prompt },
-              { type: "input_audio", input_audio: { data: request.audioBase64, format: request.audioFormat || "wav" } }
+              { type: "input_audio", input_audio: { data: request.audioBase64, format: audioFormat } }
             ]
           }
         ]
@@ -198,6 +199,13 @@ export async function RAW_AUDIO_TO_AI_TEXT_AND_AUDIO(config: AiCallConfig, reque
   }
 
   throw new Error(lastError || "Audio AI failed");
+}
+
+function normalizeInputAudioFormat(format?: string) {
+  const value = (format || "wav").toLowerCase().trim();
+  if (value === "wav" || value === "audio/wav" || value === "audio/x-wav") return "wav";
+  if (value === "mp3" || value === "audio/mp3" || value === "audio/mpeg") return "mp3";
+  throw new Error(`Unsupported OpenAI input audio format: ${format || ""}. Supported values are wav and mp3.`);
 }
 
 export function extractResponsesText(data: unknown) {

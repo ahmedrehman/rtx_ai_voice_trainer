@@ -8,6 +8,179 @@
 - Show business-relevant steps with colored status.
 - Show errors and technical logs without hiding them.
 - Never fake JSON, fake business objects, or fake readiness.
+- Reusable standard for any app/project, not only this voice trainer.
+
+## General Rule For Any Project
+
+- A debug page is a business-method proof page.
+- It must answer:
+  - What business task was attempted?
+  - What exact method/endpoint was called?
+  - What exact inputs were used?
+  - What decisions were made?
+  - Who/what made each decision?
+  - What was skipped and why?
+  - What exact output came back?
+  - What error happened, if any?
+- Method output and UI explanation are separate.
+- Business decisions must be readable without opening raw JSON.
+- Raw JSON must still be available for verification.
+- The page must make false readiness impossible.
+
+## Required Method Contract
+
+Each tested method must have a visible contract:
+
+- method name
+- business role
+- owner module/library
+- implementation/provider if relevant
+- required inputs
+- optional inputs
+- prompts/instructions if relevant
+- expected output shape
+- status object shape
+- error behavior
+- side effects
+- persistence writes, if any
+- external calls, if any
+
+If any contract part is unknown, show:
+
+```text
+UNKNOWN - NOT VERIFIED
+```
+
+## Business Oversight Rule
+
+- Every business-relevant decision must be visible as a step.
+- Every step must show:
+  - action
+  - decision/result
+  - reason
+  - actor
+- Actor examples:
+  - browser
+  - client library
+  - server library
+  - provider API
+  - database
+  - UI interpretation
+- If a step is skipped, show `SKIPPED` and the reason.
+- If a feature is missing, show `NOT IMPLEMENTED - SKIP`.
+- Do not hide business logic inside technical logs.
+
+## Prompt Rule
+
+- Prompts are business inputs.
+- Prompts must be shown and editable when the method accepts them.
+- Default prompts must come from the owning module/library when they are core business behavior.
+- The debug page may display and edit prompts, but it must not secretly invent core prompt defaults.
+- Show:
+  - system prompt
+  - task prompt
+  - how-to-respond prompt
+  - response JSON format
+  - any provider-specific instruction field
+- If prompts are not used, show:
+
+```text
+prompts: none
+```
+
+## Decision vs Error
+
+- `error` means the method failed or could not run.
+- A valid `NO` is not an error.
+- Missing required input is an error.
+- Missing config/API key is an error.
+- `NO SPEECH`, `NO TEXT`, `NO CORRECTION`, or `NOT USEFUL` can be valid done results.
+- The label must make the business result obvious:
+  - `Business decision: useful chunk? YES`
+  - `Business decision: useful chunk? NO`
+  - `Business decision: correction needed? YES`
+  - `Business decision: correction needed? NO`
+
+## Evidence Rule
+
+- Every visible claim must have evidence.
+- Evidence can be:
+  - real request/input object
+  - real response/output object
+  - status object
+  - provider response
+  - browser capability result
+  - database result
+  - technical log item
+- Do not show explanatory JSON as if it is method output.
+- If UI creates interpretation, label it `UI interpretation`.
+
+## Programmatic Test Rule
+
+- Every debug page should have a matching programmatic test when possible.
+- The programmatic test must do the same business test as the UI debug page.
+- It may skip the UI button/click.
+- It may call the method/function/endpoint directly.
+- It may use a fixed sample audio file instead of a live microphone.
+- It may use a local test database instead of a visual page.
+- It must not mock away the actual target being proven.
+
+## What Must Not Be Mocked
+
+- Do not mock the provider API when the test claims provider success.
+- Do not mock OpenAI when the test claims OpenAI works.
+- Do not mock Cloudflare D1 when the test claims D1 works.
+- Do not mock browser microphone APIs when the test claims browser microphone works.
+- Do not mock browser speech recognition when the test claims browser speech recognition works.
+- Do not mock browser audio playback when the test claims browser playback works.
+- Do not mock the function under test.
+- Do not mock the request body builder if the test claims request-body correctness.
+
+## Allowed Test Substitutions
+
+- UI click can be replaced by direct method/function/endpoint call.
+- Live microphone can be replaced by a real audio file input.
+- Full audio bytes can be summarized in logs/assertions.
+- Missing config can be tested without calling the provider.
+- Missing required input can be tested without calling the provider.
+- Local-memory data store can be tested directly as its own implementation.
+- Provider-contract tests may inspect the real request body before sending, but must not claim provider success.
+
+## Test Levels
+
+- Unit/business-method test:
+  - calls the public method directly
+  - uses real method code
+  - uses real input objects
+  - checks status, output, errors, and business decisions
+  - does not mock the method under test
+
+- Request-contract test:
+  - builds the exact provider/database/browser request
+  - checks provider-required formats and fields
+  - example: `audio/wav` must become `wav` before OpenAI audio call
+  - does not claim the provider accepted it unless the provider is actually called
+
+- Integration test:
+  - calls the actual external target
+  - uses real OpenAI/API/browser/database when available
+  - requires real config such as API key or browser capability
+  - can be skipped only with explicit `NOT RUN - MISSING CONFIG`
+
+## Programmatic Test Output
+
+- Test output must say what was really tested.
+- Test name must include the method name.
+- Test failure must show the real error.
+- Success test must assert:
+  - method/endpoint called
+  - real input used
+  - real request shape when external target exists
+  - real output shape
+  - status object
+  - business decision fields
+  - error behavior for failure cases
+- If a test uses a fake target, it must be named as fake and must not count as proving the real target.
 
 ## Core Rule
 
@@ -16,12 +189,23 @@
 - If it cannot call it, the page must say `NOT CALLABLE` and explain the missing endpoint/config.
 - UI does not invent hidden business output.
 - UI may show a colored sequence, but real `input`, `output`, `status`, and `error` must stay inspectable.
+- Shared debug UI must reset state per method.
+- One method page must not display inputs, outputs, or logs from another method page.
+- A page is not ready until the run button calls the real method and the result is inspectable.
 
 ## Required Page Sections
 
 - `Business target`
   - What user/business task this method supports.
   - Example: `LISTENING TO VOICE`, `AI AUDIO ANALYSIS`, `DATA STORE SAVE COST`.
+
+- `Method contract`
+  - Method/endpoint name.
+  - Owning module/library.
+  - Real implementation/provider.
+  - Inputs accepted by this method only.
+  - Output shape.
+  - Status shape.
 
 - `Inputs`
   - Every method input.
@@ -30,6 +214,7 @@
   - All prompts/instructions if the call can use prompts.
   - JSON response format editor if AI must return JSON.
   - Clear note when a method has `prompts: none`.
+  - Default values must show their source if they matter to business logic.
 
 - `Run button`
   - Calls the real method or real endpoint.
@@ -42,6 +227,7 @@
     - step name
     - status
     - short result/reason
+    - actor/source when relevant
   - This is a visual explanation, not fake method output.
 
 - `Real input / request`
@@ -59,6 +245,12 @@
   - Expandable array/list.
   - Below business sequence.
   - Start/done/error events.
+
+- `Result summary`
+  - Plain-language final state.
+  - Example: `DONE - useful chunk sent to AI`.
+  - Example: `DONE - no speech detected, AI skipped`.
+  - Example: `ERROR - missing API key`.
 
 ## Required Inputs By Method Type
 
@@ -337,3 +529,40 @@ NOT CONFIGURED - MISSING API KEY
 - Show status and errors.
 - Build.
 - Do not push unrelated dirty files.
+
+## General Project Checklist
+
+- Identify the real public methods first.
+- For each method, write the method contract before building UI.
+- Decide which outputs are real method outputs and which are UI interpretation.
+- Add one debug page per method.
+- Add all required inputs, not only convenient inputs.
+- Add prompt editors only when the method uses prompts.
+- Store core default prompts in the owning module/library.
+- Show business sequence with actors and decisions.
+- Show raw request and raw response.
+- Show status object and error object.
+- Mark unimplemented parts loudly.
+- Test negative paths:
+  - missing required input
+  - missing config
+  - provider error
+  - valid `NO` result
+  - empty output
+- Check state isolation between pages.
+- Check mobile and wide layout.
+- Build before claiming ready.
+
+## Ready Means
+
+- The page calls the real method.
+- All method inputs are visible.
+- All prompts sent are visible.
+- Real request is visible.
+- Real response is visible.
+- Status is visible.
+- Errors are visible.
+- Business decisions are highlighted.
+- Skipped steps are explicit.
+- No state is reused from another page.
+- A user can explain what happened without reading source code.
