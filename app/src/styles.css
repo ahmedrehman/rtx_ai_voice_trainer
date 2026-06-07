@@ -465,6 +465,20 @@ p {
   font-size: 0.9rem;
 }
 
+.prompt-source {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #cfd7e6;
+  border-radius: 8px;
+  background: #f7faff;
+}
+
+.prompt-source p {
+  color: #4b5870;
+  font-size: 0.9rem;
+}
+
 .listener-state {
   display: flex;
   align-items: center;

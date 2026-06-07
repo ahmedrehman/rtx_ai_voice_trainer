@@ -1,3 +1,6 @@
+import type { DebugPageDefinition } from "../../debug_page_types";
+import { AUDIO_ANALYSER_DEFAULT_PROMPTS } from "../audioAnalyserPrompts";
+
 export type ServerAiVoiceTestId =
   | "PRIMITIVE_TEXT_TO_AUDIO"
   | "PRIMITIVE_AUDIO_TO_TEXT"
@@ -123,9 +126,9 @@ export const SERVER_AI_VOICE_DEBUG_PAGES: DebugPageDefinition[] = [
       { key: "textUserChat", label: "textUserChat", kind: "textarea", defaultValue: "Bonjour, je veux tester ma voix." },
       { key: "audio", label: "audio", kind: "audio", required: true },
       { key: "history5LastTextChats", label: "history5LastTextChats", kind: "json", defaultValue: "[]" },
-      { key: "systemPrompt.task", label: "systemPrompt.task", kind: "textarea", defaultValue: "You are a French voice trainer. Judge pronunciation from original audio.", required: true },
-      { key: "systemPrompt.howToRespond", label: "systemPrompt.howToRespond", kind: "textarea", defaultValue: "Return JSON text and short spoken audio. Keep it short.", required: true },
-      { key: "systemPrompt.responseJsonFormat", label: "systemPrompt.responseJsonFormat", kind: "json", defaultValue: "{\n  \"flags\": {\n    \"keyword_on_sent\": false,\n    \"keyword_off_sent\": false,\n    \"has_corrections\": false,\n    \"is_chat_answer_or_correction\": \"none\"\n  },\n  \"chat_text_to_user\": \"\",\n  \"text_corrected\": \"\",\n  \"hint\": \"\"\n}", required: true }
+      { key: "systemPrompt.task", label: "systemPrompt.task", kind: "textarea", defaultValue: AUDIO_ANALYSER_DEFAULT_PROMPTS.task, required: true },
+      { key: "systemPrompt.howToRespond", label: "systemPrompt.howToRespond", kind: "textarea", defaultValue: AUDIO_ANALYSER_DEFAULT_PROMPTS.howToRespond, required: true },
+      { key: "systemPrompt.responseJsonFormat", label: "systemPrompt.responseJsonFormat", kind: "json", defaultValue: AUDIO_ANALYSER_DEFAULT_PROMPTS.responseJsonFormat, required: true }
     ],
     actions: [
       { id: "audio", label: "Run audio" },
@@ -134,4 +137,3 @@ export const SERVER_AI_VOICE_DEBUG_PAGES: DebugPageDefinition[] = [
     output: ["status", "json.flags", "json.chat_text_to_user", "json.text_corrected", "json.hint", "audio", "debug"]
   }
 ];
-import type { DebugPageDefinition } from "../../debug_page_types";

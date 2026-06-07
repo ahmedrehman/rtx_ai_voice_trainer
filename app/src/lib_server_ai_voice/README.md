@@ -101,6 +101,11 @@
 
 - role: real app method
 - implementation: `openai-audio`
+- default prompts:
+  - source: `audioAnalyserPrompts.ts`
+  - exported: `AUDIO_ANALYSER_DEFAULT_PROMPTS`
+  - factory: `createAudioAnalyserDefaultPrompts(options)`
+  - core business part, not UI decoration
 - input:
   - systemPrompt.task
   - systemPrompt.howToRespond
@@ -118,6 +123,13 @@
 - output:
   - status
   - json.flags
+    - keyword_on_sent
+    - keyword_off_sent
+    - keyword_detected
+    - keyword_exact_text
+    - has_corrections
+    - correction_type
+    - is_chat_answer_or_correction
   - json.chat_text_to_user
   - json.text_corrected
   - json.hint

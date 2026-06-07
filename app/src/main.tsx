@@ -15,6 +15,7 @@ import type { DataStoreRecordType } from "./lib_data_store";
 import { CLIENT_VOICE_SYSTEM_DEBUG_PAGES } from "./lib_client_voice_system/_test";
 import { DATA_STORE_DEBUG_PAGES } from "./lib_data_store/_test";
 import { SERVER_AI_VOICE_DEBUG_PAGES } from "./lib_server_ai_voice/_test";
+import { AUDIO_ANALYSER_DEFAULT_PROMPTS, createAudioAnalyserDefaultPrompts } from "./lib_server_ai_voice/audioAnalyserPrompts";
 import "./styles.css";
 
 type Page = DebugPageDefinition & {
@@ -1039,18 +1040,20 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
   const [text, setText] = useState("Bonjour. Ceci est un test.");
   const [voice, setVoice] = useState("coral");
   const [languageName, setLanguageName] = useState("French");
+  const [keywordOn, setKeywordOn] = useState("on");
+  const [keywordOff, setKeywordOff] = useState("off");
   const [style, setStyle] = useState("Speak as a calm trainer. Keep it short.");
-  const [systemPrompt, setSystemPrompt] = useState("You are a short voice trainer.");
-  const [additionalInstructions, setAdditionalInstructions] = useState("Keep it short.");
+  const [systemPrompt, setSystemPrompt] = useState(methodId === "AUDIO_ANALYSER" ? AUDIO_ANALYSER_DEFAULT_PROMPTS.systemPrompt : "You are a short voice trainer.");
+  const [additionalInstructions, setAdditionalInstructions] = useState(methodId === "AUDIO_ANALYSER" ? "" : "Keep it short.");
   const [audio, setAudio] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
   const [audioSourceLabel, setAudioSourceLabel] = useState("No audio selected.");
   const [textUserChat, setTextUserChat] = useState("Bonjour, je veux tester ma voix.");
   const [textChat, setTextChat] = useState("");
   const [historyText, setHistoryText] = useState("[]");
-  const [systemTask, setSystemTask] = useState("You are a French voice trainer. Judge pronunciation from original audio.");
-  const [howToRespond, setHowToRespond] = useState("Return JSON text and short spoken audio. Keep it short.");
-  const [responseJsonFormat, setResponseJsonFormat] = useState("{\n  \"flags\": {},\n  \"chat_text_to_user\": \"\",\n  \"text_corrected\": \"\",\n  \"hint\": \"\"\n}");
+  const [systemTask, setSystemTask] = useState(methodId === "AUDIO_ANALYSER" ? AUDIO_ANALYSER_DEFAULT_PROMPTS.task : "You are a French voice trainer. Judge pronunciation from original audio.");
+  const [howToRespond, setHowToRespond] = useState(methodId === "AUDIO_ANALYSER" ? AUDIO_ANALYSER_DEFAULT_PROMPTS.howToRespond : "Return JSON text and short spoken audio. Keep it short.");
+  const [responseJsonFormat, setResponseJsonFormat] = useState(methodId === "AUDIO_ANALYSER" ? AUDIO_ANALYSER_DEFAULT_PROMPTS.responseJsonFormat : "{\n  \"flags\": {},\n  \"chat_text_to_user\": \"\",\n  \"text_corrected\": \"\",\n  \"hint\": \"\"\n}");
   const [running, setRunning] = useState(false);
   const [outputAudioUrl, setOutputAudioUrl] = useState("");
   const { stack, pushStack, updateStack } = useDebugStack();
@@ -1088,6 +1091,14 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
       cancelled = true;
     };
   }, [methodId, needsAudio]);
+
+  function resetAudioAnalyserPrompts() {
+    const defaults = createAudioAnalyserDefaultPrompts({ languageName, keywordOn, keywordOff });
+    setSystemPrompt(defaults.systemPrompt);
+    setSystemTask(defaults.task);
+    setHowToRespond(defaults.howToRespond);
+    setResponseJsonFormat(defaults.responseJsonFormat);
+  }
 
   async function runServerMethod() {
     const audioInput = audio ? { size: audio.size, type: audio.type, name: audio.name } : null;
@@ -1139,6 +1150,9 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
                 textUserChat,
                 audio: audioInput,
                 voice,
+                languageName,
+                keywordOn,
+                keywordOff,
                 history5LastTextChats: parsedHistory,
                 promptConfig
               };
@@ -1205,6 +1219,7 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
               history5LastTextChats,
               provider,
               voice,
+              settings: { languageName, keywordOn, keywordOff },
               systemPrompt,
               additionalInstructions,
               promptConfig: { systemTask, howToRespond, responseJsonFormat }
@@ -1337,6 +1352,13 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
           )}
           {methodId === "AUDIO_ANALYSER" && (
             <>
+              <section className="prompt-source">
+                <h2>AUDIO_ANALYSER core prompts</h2>
+                <p>Default prompts come from lib_server_ai_voice/audioAnalyserPrompts.ts.</p>
+                <button className="secondary-button" type="button" onClick={resetAudioAnalyserPrompts}>Reset prompts from module defaults</button>
+              </section>
+              <label className="field"><span>keywordOn</span><input value={keywordOn} onChange={(event) => setKeywordOn(event.target.value)} /><small>Exact ON keyword used when resetting module default prompts and sent in settings.</small></label>
+              <label className="field"><span>keywordOff</span><input value={keywordOff} onChange={(event) => setKeywordOff(event.target.value)} /><small>Exact OFF keyword used when resetting module default prompts and sent in settings.</small></label>
               <label className="field"><span>textUserChat</span><textarea value={textUserChat} onChange={(event) => setTextUserChat(event.target.value)} rows={3} /><small>Optional user chat text sent together with original audio.</small></label>
               <label className="field"><span>history5LastTextChats</span><textarea value={historyText} onChange={(event) => setHistoryText(event.target.value)} rows={3} /><small>JSON array. Sent to server as history.</small></label>
             </>

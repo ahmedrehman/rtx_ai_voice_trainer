@@ -1,4 +1,5 @@
 import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "../mod_ai_calls";
+export { AUDIO_ANALYSER_DEFAULT_PROMPTS, createAudioAnalyserDefaultPrompts } from "./audioAnalyserPrompts";
 
 export type ServerAiProvider = "openai";
 export type ServerAiImplementation = "openai-audio" | "openai-transcribe" | "openai-tts";
@@ -127,7 +128,10 @@ export type AudioAnalyserOutput = {
     flags: {
       keyword_on_sent: boolean;
       keyword_off_sent: boolean;
+      keyword_detected: "on" | "off" | "none";
+      keyword_exact_text: string;
       has_corrections: boolean;
+      correction_type: "pronunciation" | "accent" | "grammar" | "vocabulary" | "meaning" | "none";
       is_chat_answer_or_correction: "chat_answer" | "correction" | "none";
     };
     chat_text_to_user: string;
@@ -424,7 +428,16 @@ function parseAudioAnalyserJson(text: string): AudioAnalyserOutput["json"] {
       flags: {
         keyword_on_sent: Boolean(parsed.flags?.keyword_on_sent),
         keyword_off_sent: Boolean(parsed.flags?.keyword_off_sent),
+        keyword_detected: parsed.flags?.keyword_detected === "on" || parsed.flags?.keyword_detected === "off" ? parsed.flags.keyword_detected : "none",
+        keyword_exact_text: String(parsed.flags?.keyword_exact_text || ""),
         has_corrections: Boolean(parsed.flags?.has_corrections),
+        correction_type: parsed.flags?.correction_type === "pronunciation" ||
+          parsed.flags?.correction_type === "accent" ||
+          parsed.flags?.correction_type === "grammar" ||
+          parsed.flags?.correction_type === "vocabulary" ||
+          parsed.flags?.correction_type === "meaning"
+          ? parsed.flags.correction_type
+          : "none",
         is_chat_answer_or_correction: parsed.flags?.is_chat_answer_or_correction === "chat_answer" || parsed.flags?.is_chat_answer_or_correction === "correction"
           ? parsed.flags.is_chat_answer_or_correction
           : "none"
@@ -443,7 +456,10 @@ function emptyAnalyserJson(message: string): AudioAnalyserOutput["json"] {
     flags: {
       keyword_on_sent: false,
       keyword_off_sent: false,
+      keyword_detected: "none",
+      keyword_exact_text: "",
       has_corrections: false,
+      correction_type: "none",
       is_chat_answer_or_correction: "none"
     },
     chat_text_to_user: message,

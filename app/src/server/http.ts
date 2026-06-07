@@ -1,6 +1,6 @@
 import type { Env } from "./bindings";
 import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "../mod_ai_calls";
-import { AUDIO_ANALYSER } from "../lib_server_ai_voice";
+import { AUDIO_ANALYSER, createAudioAnalyserDefaultPrompts } from "../lib_server_ai_voice";
 import { clearCostLedger, getCostLedger, listProviders, runCorrection } from "./app";
 import { json, methodNotAllowed, notFound } from "./responses";
 
@@ -121,7 +121,7 @@ async function audioTurn(request: Request, env: Env) {
     voice?: string;
     systemPrompt?: string;
     additionalInstructions?: string;
-    settings?: { languageName?: string; topic?: string; keyword?: string };
+    settings?: { languageName?: string; topic?: string; keyword?: string; keywordOn?: string; keywordOff?: string };
     promptConfig?: { systemTask?: string; howToRespond?: string; responseJsonFormat?: string };
   };
   const audioBase64 = String(body.audioBase64 || "");
@@ -163,7 +163,7 @@ async function realMethod(request: Request, env: Env) {
     textUserChat?: string;
     history5LastTextChats?: unknown[];
     provider?: string;
-    settings?: { languageName?: string; topic?: string; keyword?: string };
+    settings?: { languageName?: string; topic?: string; keyword?: string; keywordOn?: string; keywordOff?: string };
     systemPrompt?: string;
     additionalInstructions?: string;
     promptConfig?: { systemTask?: string; howToRespond?: string; responseJsonFormat?: string };
@@ -171,16 +171,11 @@ async function realMethod(request: Request, env: Env) {
   };
   const settings = body.settings || {};
   const promptConfig = body.promptConfig || {};
-  const responseJsonFormat = JSON.stringify({
-    flags: {
-      keyword_on_sent: "boolean",
-      keyword_off_sent: "boolean",
-      has_corrections: "boolean",
-      is_chat_answer_or_correction: "chat_answer | correction | none"
-    },
-    chat_text_to_user: "short answer to user",
-    text_corrected: "corrected user phrase",
-    hint: "short pronunciation/accent hint"
+  const defaultPrompts = createAudioAnalyserDefaultPrompts({
+    languageName: settings.languageName,
+    topic: settings.topic,
+    keywordOn: settings.keywordOn || settings.keyword || "on",
+    keywordOff: settings.keywordOff || "off"
   });
 
   return AUDIO_ANALYSER(
@@ -194,9 +189,9 @@ async function realMethod(request: Request, env: Env) {
     {
       provider: "openai",
       systemPrompt: {
-        task: [body.systemPrompt, promptConfig.systemTask || `You are a ${settings.languageName || "French"} voice trainer. Topic: ${settings.topic || "daily conversation"}. Keyword on/off words: ${settings.keyword || "computer"} / ${settings.keyword || "computer"} off.`].filter(Boolean).join("\n"),
-        responseJsonFormat: promptConfig.responseJsonFormat || responseJsonFormat,
-        howToRespond: [body.additionalInstructions, promptConfig.howToRespond || "Use original audio. Return JSON text plus short spoken audio. Keep it short."].filter(Boolean).join("\n")
+        task: [body.systemPrompt || defaultPrompts.systemPrompt, promptConfig.systemTask || defaultPrompts.task].filter(Boolean).join("\n"),
+        responseJsonFormat: promptConfig.responseJsonFormat || defaultPrompts.responseJsonFormat,
+        howToRespond: [body.additionalInstructions, promptConfig.howToRespond || defaultPrompts.howToRespond].filter(Boolean).join("\n")
       },
       textUserChat: body.textUserChat || "",
       audioUserAudio: {
