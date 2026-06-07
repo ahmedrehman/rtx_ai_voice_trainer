@@ -1,4 +1,4 @@
-import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "../mod_ai_calls";
+import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO, RAW_AUDIO_TO_AI_TEXT_ONLY } from "../mod_ai_calls";
 export { AUDIO_ANALYSER_DEFAULT_PROMPTS, createAudioAnalyserDefaultPrompts } from "./audioAnalyserPrompts";
 export { AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS, createAudioTurnDefaultPrompts } from "./audioTurnPrompts";
 
@@ -142,7 +142,7 @@ export type AudioAnalyserOutput = {
   };
   audio: {
     audioBase64: string;
-    audioFormat: "wav";
+    audioFormat: string;
     model: string;
   } | null;
   debug: {
@@ -154,6 +154,9 @@ export type AudioAnalyserOutput = {
       responseJsonFormat: string;
     };
     rawAiText: string;
+    spokenAudioText?: string;
+    spokenAudioSource?: string;
+    spokenAudioError?: string;
   };
 };
 
@@ -301,43 +304,62 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
     input.systemPrompt.task,
     input.systemPrompt.howToRespond,
     "Use the original microphone audio. Judge pronunciation and accent from the sound.",
-    "Return the text message as JSON only."
+    "Return the text message as JSON only.",
+    "Do not put spoken-audio instructions inside the JSON.",
+    "Do not write prose outside the JSON object."
   ].join("\n");
   const taskPrompt = [
     `TEXT USER CHAT: ${input.textUserChat || ""}`,
     `HISTORY 5 LAST TEXT CHATS: ${JSON.stringify(input.history5LastTextChats)}`,
     "The audio is the source of truth for pronunciation/accent.",
-    "Also return short spoken audio."
+    "The server will create spoken audio later from json.chat_text_to_user only."
   ].join("\n");
 
   try {
     assertConfig(config, input.provider, "openai-audio");
     if (!input.audioUserAudio.audioBase64) throw new Error("AUDIO_ANALYSER requires original microphone audio.");
-    const ai = await AUDIO_TO_AI_TEXT_AND_AUDIO(config, {
-      provider: input.provider,
-      audioBase64: input.audioUserAudio.audioBase64,
-      audioFormat: input.audioUserAudio.audioFormat,
-      systemPrompt,
-      taskPrompt,
-      responseJsonFormat: input.systemPrompt.responseJsonFormat,
-      voice: input.voice || config.voice
-    });
-    if (!ai.status.ok) throw new Error(ai.status.error || "audio AI failed");
+    const ai = await RAW_AUDIO_TO_AI_TEXT_ONLY(
+      { openAiApiKey: config.openAiApiKey },
+      {
+        model: config.audioModel,
+        audioBase64: input.audioUserAudio.audioBase64,
+        audioFormat: input.audioUserAudio.audioFormat,
+        prompt: [
+          systemPrompt,
+          "",
+          "TASK INPUT:",
+          taskPrompt,
+          "",
+          "RESPONSE JSON FORMAT:",
+          input.systemPrompt.responseJsonFormat
+        ].join("\n")
+      }
+    );
     const parsed = parseAudioAnalyserJson(ai.text);
+    const chatTextToUser = parsed.chat_text_to_user || parsed.hint || "I heard you, but I could not create a useful short answer.";
+    const spokenAudio = await createAnalyserSpeechAudio(config, input, chatTextToUser).catch((error) => ({
+      audioBase64: "",
+      audioFormat: "",
+      model: "",
+      error: error instanceof Error ? error.message : String(error)
+    }));
     const output: AudioAnalyserOutput = {
       status: doneStatus("AUDIO_ANALYSER", startedAt),
       json: {
         flags: parsed.flags,
-        chat_text_to_user: parsed.chat_text_to_user || ai.text,
+        chat_text_to_user: chatTextToUser,
         text_corrected: parsed.text_corrected,
         hint: parsed.hint
       },
-      audio: ai.audioBase64 ? { audioBase64: ai.audioBase64, audioFormat: ai.audioFormat, model: ai.model } : null,
+      audio: spokenAudio.audioBase64 ? { audioBase64: spokenAudio.audioBase64, audioFormat: spokenAudio.audioFormat, model: spokenAudio.model } : null,
       debug: {
         config: publicConfig(config),
         inputWithoutAudio: withoutAnalyserAudio(input),
         promptSent: { systemPrompt, taskPrompt, responseJsonFormat: input.systemPrompt.responseJsonFormat },
-        rawAiText: ai.text
+        rawAiText: ai.text,
+        spokenAudioText: chatTextToUser,
+        spokenAudioSource: "json.chat_text_to_user",
+        spokenAudioError: "error" in spokenAudio ? spokenAudio.error : undefined
       }
     };
     log(config, "info", "AUDIO_ANALYSER", "done", statusOnly(output.status));
@@ -357,6 +379,42 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
       }
     };
   }
+}
+
+async function createAnalyserSpeechAudio(config: ServerAiConfig, input: AudioAnalyserInput, text: string) {
+  if (!text.trim()) return { audioBase64: "", audioFormat: "", model: "" };
+  const speech = await DUMBB_TEXT_TO_SPEACH(
+    { openAiApiKey: config.openAiApiKey },
+    {
+      model: config.ttsModel,
+      text,
+      voice: input.voice || config.voice,
+      languageName: "",
+      style: "Speak only this user-facing answer. Do not say JSON, braces, field names, flags, or debug information."
+    }
+  );
+  const buffer = await new Response(speech.body).arrayBuffer();
+  return {
+    audioBase64: arrayBufferToBase64(buffer),
+    audioFormat: contentTypeToAudioFormat(speech.contentType),
+    model: config.ttsModel || "gpt-4o-mini-tts"
+  };
+}
+
+function contentTypeToAudioFormat(contentType: string) {
+  const value = contentType.toLowerCase();
+  if (value.includes("wav")) return "wav";
+  if (value.includes("mpeg") || value.includes("mp3")) return "mp3";
+  if (value.includes("opus")) return "opus";
+  if (value.includes("aac")) return "aac";
+  return contentType || "audio/mpeg";
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index]);
+  return btoa(binary);
 }
 
 function assertConfig(config: ServerAiConfig, provider: ServerAiProvider, implementation: ServerAiImplementation) {

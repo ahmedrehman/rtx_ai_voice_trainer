@@ -24,7 +24,7 @@ export function createAudioAnalyserDefaultPrompts(options: AudioAnalyserPromptOp
       "You receive original microphone audio, optional user chat text, and the last text-chat history.",
       "Use the original microphone audio as the source of truth for pronunciation and accent.",
       "Return exactly one JSON object as text. Do not wrap it in markdown.",
-      "Also produce a short spoken audio answer."
+      "The server creates spoken audio later from chat_text_to_user only."
     ].join("\n"),
     task: [
       `Target language: ${languageName}.`,
@@ -45,7 +45,8 @@ export function createAudioAnalyserDefaultPrompts(options: AudioAnalyserPromptOp
     howToRespond: [
       "Keep the user-facing text short.",
       "Return JSON text matching responseJsonFormat.",
-      "The spoken audio should say the same practical answer as chat_text_to_user.",
+      "chat_text_to_user is the only text allowed to become spoken audio.",
+      "Never put JSON field names, flags, braces, or debug text into chat_text_to_user.",
       "Do not invent a correction if the audio is unclear."
     ].join("\n"),
     responseJsonFormat: JSON.stringify({

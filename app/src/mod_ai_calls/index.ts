@@ -32,6 +32,11 @@ export type AiAudioTurnResult = {
   audioFormat: "wav";
 };
 
+export type AiAudioTextResult = {
+  model: string;
+  text: string;
+};
+
 export async function PURE_TEXT_TO_TEXT_CORRECTION(config: AiCallConfig, request: AiCorrectionRequest) {
   const apiKey = requireOpenAiKey(config);
   const requestBody = {
@@ -199,6 +204,57 @@ export async function RAW_AUDIO_TO_AI_TEXT_AND_AUDIO(config: AiCallConfig, reque
   }
 
   throw new Error(lastError || "Audio AI failed");
+}
+
+export async function RAW_AUDIO_TO_AI_TEXT_ONLY(config: AiCallConfig, request: AiAudioTurnRequest): Promise<AiAudioTextResult> {
+  const apiKey = requireOpenAiKey(config);
+  if (!request.audioBase64) throw new Error("Audio AI input is empty.");
+  const audioFormat = normalizeInputAudioFormat(request.audioFormat);
+
+  const attempts = request.model ? [request.model] : ["gpt-audio", "gpt-audio-1.5"];
+  let lastError = "";
+
+  for (const model of attempts) {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model,
+        modalities: ["text"],
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: request.prompt },
+              { type: "input_audio", input_audio: { data: request.audioBase64, format: audioFormat } }
+            ]
+          }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      lastError = await response.text().catch(() => "");
+      continue;
+    }
+
+    const data = await response.json() as {
+      choices?: Array<{
+        message?: {
+          content?: string | null;
+        };
+      }>;
+    };
+    return {
+      model,
+      text: data.choices?.[0]?.message?.content || ""
+    };
+  }
+
+  throw new Error(lastError || "Audio AI text failed");
 }
 
 function normalizeInputAudioFormat(format?: string) {
