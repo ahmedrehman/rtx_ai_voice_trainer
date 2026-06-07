@@ -1,5 +1,6 @@
 export type ClientVoiceSystemTestId =
   | "SYSTEM_MEANINGFUL_AUDIO_CHUNK"
+  | "SYSTEM_AUDIO_ENERGY_CHECK"
   | "SYSTEM_MICRO_TO_AUDIO"
   | "SYSTEM_AUDIO_TO_TEXT"
   | "SYSTEM_TEXT_TO_AUDIO"
@@ -21,6 +22,14 @@ export const CLIENT_VOICE_SYSTEM_TESTS: ClientVoiceSystemTest[] = [
     role: "mic -> useful chunk",
     input: ["microphone", "maxDurationMs", "chunkDecisionMode", "browser speech checker if available", "SYSTEM_AUDIO_ENERGY_CHECK"],
     output: ["audio blob", "chunkReason", "optional browserSpeechText", "energyCheck", "business USEFUL_CHUNK decision"],
+    prompt: "none"
+  },
+  {
+    id: "SYSTEM_AUDIO_ENERGY_CHECK",
+    title: "Audio energy check",
+    role: "microphone stream -> sound/silence decision",
+    input: ["microphone stream", "threshold", "minActiveMs", "sampleEveryMs"],
+    output: ["hasSound", "activeMs", "maxRms", "averageRms", "sampleCount"],
     prompt: "none"
   },
   {
@@ -84,6 +93,21 @@ export const CLIENT_VOICE_SYSTEM_DEBUG_PAGES: DebugPageDefinition[] = [
     ],
     actions: [{ id: "audio", label: "Create audio chunk", requiresAudio: true }],
     output: ["status", "audio size", "mimeType", "durationMs", "chunkReason", "browserSpeechText", "energyCheck", "USEFUL_CHUNK"]
+  },
+  {
+    id: "SYSTEM_AUDIO_ENERGY_CHECK",
+    title: "Audio energy check",
+    module: "Client Voice",
+    role: "public client method that samples microphone RMS energy to skip silence before AI cost",
+    ready: true,
+    inputs: [
+      { key: "durationMs", label: "durationMs", kind: "number", defaultValue: 2000, required: true },
+      { key: "threshold", label: "threshold", kind: "number", defaultValue: 0.035, required: true },
+      { key: "minActiveMs", label: "minActiveMs", kind: "number", defaultValue: 250, required: true },
+      { key: "sampleEveryMs", label: "sampleEveryMs", kind: "number", defaultValue: 50 }
+    ],
+    actions: [{ id: "audio", label: "Run energy check", requiresAudio: true }],
+    output: ["status", "hasSound", "activeMs", "maxRms", "averageRms", "sampleCount"]
   },
   {
     id: "SYSTEM_MICRO_TO_AUDIO",

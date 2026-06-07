@@ -2,7 +2,14 @@ import React, { useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Activity, Archive, BookOpen, Database, FileAudio, Home, Menu, Mic, Server, Volume2, X } from "lucide-react";
 import type { DebugPageDefinition } from "./debug_page_types";
-import { SYSTEM_MEANINGFUL_AUDIO_CHUNK } from "./lib_client_voice_system";
+import {
+  SYSTEM_AUDIO_ENERGY_CHECK,
+  SYSTEM_AUDIO_TO_SPEAKER,
+  SYSTEM_AUDIO_TO_TEXT,
+  SYSTEM_MEANINGFUL_AUDIO_CHUNK,
+  SYSTEM_MICRO_TO_AUDIO,
+  SYSTEM_TEXT_TO_AUDIO
+} from "./lib_client_voice_system";
 import { CLIENT_VOICE_SYSTEM_DEBUG_PAGES } from "./lib_client_voice_system/_test";
 import { DATA_STORE_DEBUG_PAGES } from "./lib_data_store/_test";
 import { SERVER_AI_VOICE_DEBUG_PAGES } from "./lib_server_ai_voice/_test";
@@ -132,7 +139,20 @@ function PageView({ page }: { page: Page }) {
       <p>{page.role}</p>
       {page.id === "MICROPHONE_AUDIO_REQUIREMENTS" && <MicrophoneDocs />}
       {page.id === "SYSTEM_MEANINGFUL_AUDIO_CHUNK" && <MeaningfulAudioChunkDebug />}
-      {page.id !== "MICROPHONE_AUDIO_REQUIREMENTS" && page.id !== "SYSTEM_MEANINGFUL_AUDIO_CHUNK" && <StaticPage page={page} />}
+      {page.id === "SYSTEM_AUDIO_ENERGY_CHECK" && <AudioEnergyCheckDebug />}
+      {page.id === "SYSTEM_MICRO_TO_AUDIO" && <MicroToAudioDebug />}
+      {page.id === "SYSTEM_AUDIO_TO_TEXT" && <AudioToTextDebug />}
+      {page.id === "SYSTEM_TEXT_TO_AUDIO" && <TextToAudioDebug />}
+      {page.id === "SYSTEM_AUDIO_TO_SPEAKER" && <AudioToSpeakerDebug />}
+      {![
+        "MICROPHONE_AUDIO_REQUIREMENTS",
+        "SYSTEM_MEANINGFUL_AUDIO_CHUNK",
+        "SYSTEM_AUDIO_ENERGY_CHECK",
+        "SYSTEM_MICRO_TO_AUDIO",
+        "SYSTEM_AUDIO_TO_TEXT",
+        "SYSTEM_TEXT_TO_AUDIO",
+        "SYSTEM_AUDIO_TO_SPEAKER"
+      ].includes(page.id) && <StaticPage page={page} />}
     </article>
   );
 }
@@ -479,8 +499,528 @@ function MeaningfulAudioChunkDebug() {
   );
 }
 
+function AudioEnergyCheckDebug() {
+  const [durationMs, setDurationMs] = useState(2000);
+  const [threshold, setThreshold] = useState(0.035);
+  const [minActiveMs, setMinActiveMs] = useState(250);
+  const [sampleEveryMs, setSampleEveryMs] = useState(50);
+  const [running, setRunning] = useState(false);
+  const { stack, pushStack, updateStack } = useDebugStack();
+
+  async function runCheck() {
+    const input = {
+      durationMs,
+      threshold,
+      minActiveMs,
+      sampleEveryMs,
+      browserNeeds: {
+        secureContext: window.isSecureContext,
+        getUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
+        audioContext: Boolean(window.AudioContext || window.webkitAudioContext),
+        requestedMedia: { audio: true, video: false }
+      }
+    };
+    const id = pushStack({
+      type: "SYSTEM_AUDIO_ENERGY_CHECK",
+      status: "running",
+      input,
+      steps: [
+        { label: "Request microphone", state: "running", detail: "Browser requests microphone audio only." },
+        { label: "Start energy check", state: "pending", detail: "Public library method will sample RMS energy." },
+        { label: "Decide sound", state: "pending", detail: "No decision yet." }
+      ]
+    });
+    setRunning(true);
+    let stream: MediaStream | null = null;
+
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) throw new Error("client microphone API not available");
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const controller = SYSTEM_AUDIO_ENERGY_CHECK({ logger: loggerFor(pushStack) }, { stream, threshold, minActiveMs, sampleEveryMs });
+      controller.start();
+      await wait(durationMs);
+      controller.stop();
+      stream.getTracks().forEach((track) => track.stop());
+      const summary = controller.summary();
+      const hasSound = summary.hasSound;
+      const business = {
+        BUSINESS_DECISION: `HAS_SOUND=${hasSound ? "YES" : "NO"}`,
+        decision_ok: hasSound,
+        business_decision: hasSound ? "SOUND_DETECTED" : "SILENCE_OR_TOO_LOW",
+        business_reason: hasSound
+          ? "Audio energy crossed the configured RMS threshold long enough."
+          : "Audio energy did not cross the configured RMS threshold long enough. This can skip silent chunks before AI.",
+        send_to_ai: hasSound ? "NO_NOT_THIS_FUNCTION" : "NO_SKIP_SILENCE",
+        method: "SYSTEM_AUDIO_ENERGY_CHECK",
+        public_library_method: true,
+        vad: "NOT IMPLEMENTED",
+        warning: "Energy check is not real VAD. Loud noise can count as sound."
+      };
+      updateStack(id, {
+        status: "ok",
+        business,
+        output: summary,
+        steps: [
+          { label: "Request microphone", state: "done", detail: "Microphone stream opened with audio only." },
+          { label: "Start energy check", state: summary.available ? "done" : "error", detail: summary.available ? "RMS energy samples collected." : String(summary.error || "AudioContext unavailable.") },
+          { label: "Decide sound", state: hasSound ? "done" : "error", detail: String(business.business_reason) }
+        ]
+      });
+    } catch (error) {
+      stream?.getTracks().forEach((track) => track.stop());
+      updateStack(id, {
+        status: "error",
+        business: {
+          BUSINESS_DECISION: "HAS_SOUND=NO",
+          decision_ok: false,
+          business_reason: "Energy check could not run.",
+          send_to_ai: "NO_ERROR"
+        },
+        steps: [{ label: "Run method", state: "error", detail: error instanceof Error ? error.message : String(error) }],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <SimpleDebugPage
+      stack={stack}
+      inputs={(
+        <>
+          <NumberField label="durationMs" value={durationMs} min={200} step={100} onChange={setDurationMs} note="How long to sample microphone energy." />
+          <NumberField label="threshold" value={threshold} min={0.001} max={0.5} step={0.001} onChange={setThreshold} note="RMS threshold. Lower is more sensitive." />
+          <NumberField label="minActiveMs" value={minActiveMs} min={50} step={50} onChange={setMinActiveMs} note="Required time above threshold." />
+          <NumberField label="sampleEveryMs" value={sampleEveryMs} min={20} step={10} onChange={setSampleEveryMs} note="How often RMS is sampled." />
+          <button className="run-button" type="button" onClick={() => void runCheck()} disabled={running}>{running ? "Checking..." : "Run energy check"}</button>
+        </>
+      )}
+    />
+  );
+}
+
+function MicroToAudioDebug() {
+  const [durationMs, setDurationMs] = useState(3000);
+  const [mimeType, setMimeType] = useState("");
+  const [running, setRunning] = useState(false);
+  const [audioUrl, setAudioUrl] = useState("");
+  const { stack, pushStack, updateStack } = useDebugStack();
+
+  async function runRecord() {
+    const input = {
+      durationMs,
+      mimeType: mimeType || undefined,
+      browserNeeds: {
+        secureContext: window.isSecureContext,
+        getUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
+        mediaRecorder: typeof MediaRecorder !== "undefined",
+        requestedMedia: { audio: true, video: false }
+      }
+    };
+    const id = pushStack({
+      type: "SYSTEM_MICRO_TO_AUDIO",
+      status: "running",
+      input,
+      steps: [
+        { label: "Request microphone", state: "running", detail: "Browser requests microphone audio only." },
+        { label: "Record audio", state: "pending", detail: "MediaRecorder has not finished yet." },
+        { label: "Business decision", state: "pending", detail: "No audio decision yet." }
+      ]
+    });
+    setRunning(true);
+    try {
+      const result = await SYSTEM_MICRO_TO_AUDIO({ logger: loggerFor(pushStack) }, { durationMs, mimeType: mimeType || undefined });
+      if (audioUrl) URL.revokeObjectURL(audioUrl);
+      const nextUrl = result.audio ? URL.createObjectURL(result.audio) : "";
+      setAudioUrl(nextUrl);
+      const recorded = Boolean(result.audio && result.audio.size > 0);
+      const business = {
+        BUSINESS_DECISION: `AUDIO_RECORDED=${recorded ? "YES" : "NO"}`,
+        decision_ok: recorded,
+        business_decision: recorded ? "AUDIO_RECORDED" : "NO_AUDIO",
+        business_reason: recorded ? "Browser MediaRecorder produced an audio blob." : "No audio blob was produced.",
+        send_to_ai: "NO_NOT_THIS_FUNCTION",
+        method: "SYSTEM_MICRO_TO_AUDIO",
+        note: "This function records raw audio only. It does not decide speech and does not call AI."
+      };
+      updateStack(id, {
+        status: result.status.ok ? "ok" : "error",
+        business,
+        output: {
+          status: result.status,
+          audio: result.audio ? { size: result.audio.size, type: result.audio.type } : null,
+          mimeType: result.mimeType,
+          durationMs: result.durationMs
+        },
+        steps: [
+          { label: "Request microphone", state: result.status.ok ? "done" : "error", detail: "Requested audio only. No camera requested." },
+          { label: "Record audio", state: recorded ? "done" : "error", detail: recorded ? "Audio blob exists." : "No audio blob exists." },
+          { label: "Business decision", state: recorded ? "done" : "error", detail: String(business.business_reason) }
+        ],
+        error: result.status.error
+      });
+    } catch (error) {
+      updateStack(id, {
+        status: "error",
+        business: { BUSINESS_DECISION: "AUDIO_RECORDED=NO", decision_ok: false, business_reason: "Recording failed.", send_to_ai: "NO_ERROR" },
+        steps: [{ label: "Run method", state: "error", detail: error instanceof Error ? error.message : String(error) }],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <SimpleDebugPage
+      stack={stack}
+      outputAudioUrl={audioUrl}
+      inputs={(
+        <>
+          <NumberField label="durationMs" value={durationMs} min={500} step={100} onChange={setDurationMs} note="How long to record raw microphone audio." />
+          <label className="field">
+            <span>mimeType</span>
+            <input value={mimeType} onChange={(event) => setMimeType(event.target.value)} placeholder="empty = browser default" />
+            <small>Optional MediaRecorder MIME type.</small>
+          </label>
+          <button className="run-button" type="button" onClick={() => void runRecord()} disabled={running}>{running ? "Recording..." : "Record raw audio"}</button>
+        </>
+      )}
+    />
+  );
+}
+
+function AudioToTextDebug() {
+  const [lang, setLang] = useState("fr-FR");
+  const [running, setRunning] = useState(false);
+  const { stack, pushStack, updateStack } = useDebugStack();
+
+  async function runListen() {
+    const input = {
+      lang,
+      browserNeeds: {
+        secureContext: window.isSecureContext,
+        speechRecognitionChecker: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+        requestedMedia: { audio: true, video: false }
+      }
+    };
+    const id = pushStack({
+      type: "SYSTEM_AUDIO_TO_TEXT",
+      status: "running",
+      input,
+      steps: [
+        { label: "Start browser speech recognition", state: "running", detail: "Browser helper listens for speech text." },
+        { label: "Business decision", state: "pending", detail: "No text decision yet." }
+      ]
+    });
+    setRunning(true);
+    try {
+      const result = await SYSTEM_AUDIO_TO_TEXT({ logger: loggerFor(pushStack) }, { lang });
+      const hasText = Boolean(result.text.trim());
+      const business = {
+        BUSINESS_DECISION: `TEXT_DETECTED=${hasText ? "YES" : "NO"}`,
+        decision_ok: hasText,
+        business_decision: hasText ? "TEXT_DETECTED" : "NO_TEXT",
+        business_reason: hasText ? "Browser SpeechRecognition returned text." : "Browser SpeechRecognition returned no text or failed.",
+        send_to_ai: "NO_NOT_THIS_FUNCTION",
+        method: "SYSTEM_AUDIO_TO_TEXT",
+        note: "Browser helper only. Not AI transcription and not pronunciation analysis."
+      };
+      updateStack(id, {
+        status: result.status.ok ? "ok" : "error",
+        business,
+        output: result,
+        steps: [
+          { label: "Start browser speech recognition", state: result.status.ok ? "done" : "error", detail: result.status.ok ? "Browser returned a result." : String(result.status.error || "Browser speech recognition failed.") },
+          { label: "Business decision", state: hasText ? "done" : "error", detail: String(business.business_reason) }
+        ],
+        error: result.status.error
+      });
+    } catch (error) {
+      updateStack(id, {
+        status: "error",
+        business: { BUSINESS_DECISION: "TEXT_DETECTED=NO", decision_ok: false, business_reason: "Browser speech recognition could not run.", send_to_ai: "NO_ERROR" },
+        steps: [{ label: "Run method", state: "error", detail: error instanceof Error ? error.message : String(error) }],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <SimpleDebugPage
+      stack={stack}
+      inputs={(
+        <>
+          <label className="field">
+            <span>lang</span>
+            <input value={lang} onChange={(event) => setLang(event.target.value)} />
+            <small>Browser SpeechRecognition language hint. It is not AI language detection.</small>
+          </label>
+          <button className="run-button" type="button" onClick={() => void runListen()} disabled={running}>{running ? "Listening..." : "Listen for browser text"}</button>
+        </>
+      )}
+    />
+  );
+}
+
+function TextToAudioDebug() {
+  const [text, setText] = useState("Bonjour. Ceci est un test.");
+  const [lang, setLang] = useState("fr-FR");
+  const [running, setRunning] = useState(false);
+  const { stack, pushStack, updateStack } = useDebugStack();
+
+  async function runSpeak() {
+    const input = {
+      text,
+      lang,
+      browserNeeds: {
+        speechSynthesis: "speechSynthesis" in window,
+        speechSynthesisUtterance: typeof SpeechSynthesisUtterance !== "undefined",
+        userClickRequired: true
+      }
+    };
+    const id = pushStack({
+      type: "SYSTEM_TEXT_TO_AUDIO",
+      status: "running",
+      input,
+      steps: [
+        { label: "Create browser utterance", state: "running", detail: "Browser dummy text-to-speech starts from the text input." },
+        { label: "Business decision", state: "pending", detail: "No playback decision yet." }
+      ]
+    });
+    setRunning(true);
+    try {
+      const result = await SYSTEM_TEXT_TO_AUDIO({ logger: loggerFor(pushStack) }, { text, lang });
+      const business = {
+        BUSINESS_DECISION: `SPOKEN=${result.spoken ? "YES" : "NO"}`,
+        decision_ok: result.spoken,
+        business_decision: result.spoken ? "BROWSER_SPOKE_TEXT" : "BROWSER_DID_NOT_SPEAK",
+        business_reason: result.spoken ? "Browser speech synthesis played the text." : "Browser speech synthesis failed or is unavailable.",
+        send_to_ai: "NO_NOT_THIS_FUNCTION",
+        method: "SYSTEM_TEXT_TO_AUDIO",
+        note: "DUMB_BROWSER_TEXT_TO_SPEECH. This is not AI voice audio."
+      };
+      updateStack(id, {
+        status: result.status.ok ? "ok" : "error",
+        business,
+        output: result,
+        steps: [
+          { label: "Create browser utterance", state: result.status.ok ? "done" : "error", detail: result.status.ok ? "Browser accepted and played the utterance." : String(result.status.error || "Browser TTS failed.") },
+          { label: "Business decision", state: result.spoken ? "done" : "error", detail: String(business.business_reason) }
+        ],
+        error: result.status.error
+      });
+    } catch (error) {
+      updateStack(id, {
+        status: "error",
+        business: { BUSINESS_DECISION: "SPOKEN=NO", decision_ok: false, business_reason: "Browser dummy TTS could not run.", send_to_ai: "NO_ERROR" },
+        steps: [{ label: "Run method", state: "error", detail: error instanceof Error ? error.message : String(error) }],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <SimpleDebugPage
+      stack={stack}
+      inputs={(
+        <>
+          <label className="field">
+            <span>text</span>
+            <textarea value={text} onChange={(event) => setText(event.target.value)} rows={4} />
+            <small>Text for browser dummy TTS. No AI prompt.</small>
+          </label>
+          <label className="field">
+            <span>lang</span>
+            <input value={lang} onChange={(event) => setLang(event.target.value)} />
+            <small>Browser speech synthesis language hint.</small>
+          </label>
+          <button className="run-button" type="button" onClick={() => void runSpeak()} disabled={running}>{running ? "Speaking..." : "Speak browser dummy TTS"}</button>
+        </>
+      )}
+    />
+  );
+}
+
+function AudioToSpeakerDebug() {
+  const [audio, setAudio] = useState<Blob | null>(null);
+  const [audioUrl, setAudioUrl] = useState("");
+  const [running, setRunning] = useState(false);
+  const { stack, pushStack, updateStack } = useDebugStack();
+
+  function selectAudio(file: File | null) {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudio(file);
+    setAudioUrl(file ? URL.createObjectURL(file) : "");
+  }
+
+  async function runPlayback() {
+    const input = {
+      audio: audio ? { size: audio.size, type: audio.type } : null,
+      browserNeeds: { audioElementPlayback: true, userClickRequired: true }
+    };
+    const id = pushStack({
+      type: "SYSTEM_AUDIO_TO_SPEAKER",
+      status: "running",
+      input,
+      steps: [
+        { label: "Check audio input", state: audio ? "done" : "error", detail: audio ? "Audio file is selected." : "No audio selected." },
+        { label: "Play audio", state: "pending", detail: "No playback result yet." },
+        { label: "Business decision", state: "pending", detail: "No playback decision yet." }
+      ]
+    });
+    if (!audio) {
+      updateStack(id, {
+        status: "error",
+        business: { BUSINESS_DECISION: "PLAYED=NO", decision_ok: false, business_reason: "No audio file selected.", send_to_ai: "NO_ERROR" },
+        error: "No audio file selected."
+      });
+      return;
+    }
+    setRunning(true);
+    try {
+      const result = await SYSTEM_AUDIO_TO_SPEAKER({ logger: loggerFor(pushStack) }, { audio });
+      const business = {
+        BUSINESS_DECISION: `PLAYED=${result.played ? "YES" : "NO"}`,
+        decision_ok: result.played,
+        business_decision: result.played ? "AUDIO_PLAYED" : "AUDIO_NOT_PLAYED",
+        business_reason: result.played ? "Browser audio playback ended successfully." : "Browser audio playback failed.",
+        send_to_ai: "NO_NOT_THIS_FUNCTION",
+        method: "SYSTEM_AUDIO_TO_SPEAKER",
+        note: "This only plays an existing audio blob through the browser speaker."
+      };
+      updateStack(id, {
+        status: result.status.ok ? "ok" : "error",
+        business,
+        output: result,
+        steps: [
+          { label: "Check audio input", state: "done", detail: "Audio file was selected." },
+          { label: "Play audio", state: result.played ? "done" : "error", detail: result.played ? "Browser reported playback ended." : String(result.status.error || "Playback failed.") },
+          { label: "Business decision", state: result.played ? "done" : "error", detail: String(business.business_reason) }
+        ],
+        error: result.status.error
+      });
+    } catch (error) {
+      updateStack(id, {
+        status: "error",
+        business: { BUSINESS_DECISION: "PLAYED=NO", decision_ok: false, business_reason: "Speaker playback could not run.", send_to_ai: "NO_ERROR" },
+        steps: [{ label: "Run method", state: "error", detail: error instanceof Error ? error.message : String(error) }],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <SimpleDebugPage
+      stack={stack}
+      outputAudioUrl={audioUrl}
+      inputs={(
+        <>
+          <label className="field">
+            <span>audio file</span>
+            <input type="file" accept="audio/*" onChange={(event) => selectAudio(event.target.files?.[0] || null)} />
+            <small>Select an audio file/blob to play through SYSTEM_AUDIO_TO_SPEAKER.</small>
+          </label>
+          <button className="run-button" type="button" onClick={() => void runPlayback()} disabled={running}>{running ? "Playing..." : "Play selected audio"}</button>
+        </>
+      )}
+    />
+  );
+}
+
+function SimpleDebugPage({ inputs, stack, outputAudioUrl }: { inputs: React.ReactNode; stack: StackItem[]; outputAudioUrl?: string }) {
+  const methodRuns = stack.filter((item) => item.type !== "library-log");
+  const technicalLogs = stack.filter((item) => item.type === "library-log");
+
+  return (
+    <section className="debug-method">
+      <div className="debug-grid">
+        <section className="method-panel">
+          <h2>Inputs</h2>
+          {inputs}
+        </section>
+        <section className="method-panel">
+          {outputAudioUrl !== undefined && (
+            <>
+              <h2>Output audio</h2>
+              {outputAudioUrl ? <audio controls src={outputAudioUrl} /> : <p>No audio selected or recorded yet.</p>}
+            </>
+          )}
+          <h2>Business flow</h2>
+          {methodRuns.length === 0 ? <p>No method call yet.</p> : methodRuns.map((item) => <StackArticle item={item} key={item.id} />)}
+          <h2>Technical log items</h2>
+          {technicalLogs.length === 0 ? <p>No logs yet.</p> : technicalLogs.map((item) => <StackArticle item={item} key={item.id} compact />)}
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  min,
+  max,
+  step,
+  note,
+  onChange
+}: {
+  label: string;
+  value: number;
+  min?: number;
+  max?: number;
+  step?: number;
+  note: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label className="field">
+      <span>{label}</span>
+      <input type="number" value={value} min={min} max={max} step={step} onChange={(event) => onChange(Number(event.target.value))} />
+      <small>{note}</small>
+    </label>
+  );
+}
+
+function useDebugStack() {
+  const [stack, setStack] = useState<StackItem[]>([]);
+
+  function pushStack(item: Omit<StackItem, "id" | "createdAt">) {
+    const next = { id: createId(), createdAt: new Date().toISOString(), ...item };
+    setStack((current) => [...current, next].slice(-30));
+    return next.id;
+  }
+
+  function updateStack(id: string, patch: Partial<StackItem>) {
+    setStack((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  }
+
+  return { stack, pushStack, updateStack };
+}
+
+function loggerFor(pushStack: (item: Omit<StackItem, "id" | "createdAt">) => string) {
+  return (event: { level: "info" | "error"; method: string; message: string; data?: unknown; createdAt: string }) => {
+    pushStack({
+      type: "library-log",
+      status: event.level === "error" ? "error" : "ok",
+      output: event
+    });
+  };
+}
+
 function StackArticle({ item, compact = false }: { item: StackItem; compact?: boolean }) {
   const business = item.business as Record<string, unknown> | undefined;
+  const businessDecision = business?.BUSINESS_DECISION_USEFUL_CHUNK !== undefined
+    ? `USEFUL CHUNK = ${String(business.BUSINESS_DECISION_USEFUL_CHUNK)}`
+    : String(business?.BUSINESS_DECISION || "");
+  const decisionOk = business?.decision_ok === true || business?.BUSINESS_DECISION_USEFUL_CHUNK === "YES";
 
   return (
     <article className={`stack-item ${item.status}`} key={item.id}>
@@ -490,8 +1030,8 @@ function StackArticle({ item, compact = false }: { item: StackItem; compact?: bo
         <time>{new Date(item.createdAt).toLocaleTimeString()}</time>
       </div>
       {business !== undefined && (
-        <section className={`decision-result ${business.BUSINESS_DECISION_USEFUL_CHUNK === "YES" ? "yes" : "no"}`}>
-          <strong>BUSINESS DECISION: USEFUL CHUNK = {String(business.BUSINESS_DECISION_USEFUL_CHUNK)}</strong>
+        <section className={`decision-result ${decisionOk ? "yes" : "no"}`}>
+          <strong>BUSINESS DECISION: {businessDecision}</strong>
           <span>SEND TO AI: {String(business.send_to_ai)}</span>
           <p>{String(business.business_reason)}</p>
         </section>
