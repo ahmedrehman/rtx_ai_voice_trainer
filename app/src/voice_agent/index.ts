@@ -71,7 +71,7 @@ export type VoiceAgentAnalyseResult = {
   chatMessage: VoiceAgentChatMessage | null;
   audio: {
     audioBase64: string;
-  audioFormat: string;
+    audioFormat: string;
   } | null;
 };
 
@@ -187,32 +187,40 @@ export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): 
   const startedAt = new Date().toISOString();
   const endpoint = input.endpoint || "/api/audio-analyser";
   const prompts = VOICE_AGENT_CREATE_PROMPTS(input.settings);
-  const audioBase64 = await blobToBase64(input.audio);
-  const request = {
-    audioBase64,
-    audioFormat: input.audio.type || "wav",
-    textUserChat: input.textUserChat,
-    history5LastTextChats: input.history5LastTextChats,
-    provider: input.settings.provider,
-    voice: input.settings.voice,
-    settings: {
-      languageName: input.settings.languageName,
-      topicId: input.settings.topicId,
-      topic: input.settings.topic,
-      keywordOn: input.settings.keywordOn,
-      keywordOff: input.settings.keywordOff,
-      voice: input.settings.voice
-    },
-    systemPrompt: prompts.systemPrompt,
-    additionalInstructions: input.additionalInstructions || "",
-    promptConfig: {
-      systemTask: prompts.task,
-      howToRespond: prompts.howToRespond,
-      responseJsonFormat: prompts.responseJsonFormat
-    }
-  };
+  let request: ({ audioBase64: string } & Record<string, unknown>) | null = null;
 
   try {
+    const aiAudio = await normalizeAudioBlobForOpenAi(input.audio);
+    const audioBase64 = await blobToBase64(aiAudio.blob);
+    request = {
+      audioBase64,
+      audioFormat: aiAudio.audioFormat,
+      sourceAudio: {
+        browserType: input.audio.type || "",
+        browserSize: input.audio.size,
+        convertedTo: aiAudio.audioFormat,
+        conversion: aiAudio.conversion
+      },
+      textUserChat: input.textUserChat,
+      history5LastTextChats: input.history5LastTextChats,
+      provider: input.settings.provider,
+      voice: input.settings.voice,
+      settings: {
+        languageName: input.settings.languageName,
+        topicId: input.settings.topicId,
+        topic: input.settings.topic,
+        keywordOn: input.settings.keywordOn,
+        keywordOff: input.settings.keywordOff,
+        voice: input.settings.voice
+      },
+      systemPrompt: prompts.systemPrompt,
+      additionalInstructions: input.additionalInstructions || "",
+      promptConfig: {
+        systemTask: prompts.task,
+        howToRespond: prompts.howToRespond,
+        responseJsonFormat: prompts.responseJsonFormat
+      }
+    };
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -240,6 +248,7 @@ export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): 
       audio: isAudioAnalyserOutput(data) && data.audio ? { audioBase64: data.audio.audioBase64, audioFormat: data.audio.audioFormat } : null
     };
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     return {
       status: {
         method: "VOICE_AGENT_ANALYSE_AUDIO",
@@ -247,11 +256,16 @@ export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): 
         phase: "error",
         startedAt,
         finishedAt: new Date().toISOString(),
-        error: error instanceof Error ? error.message : String(error)
+        error: errorMessage
       },
-      request: withoutFullAudio(request),
-      response: { error: error instanceof Error ? error.message : String(error) },
-      chatMessage: null,
+      request: request ? withoutFullAudio(request) : {
+        sourceAudio: {
+          browserType: input.audio.type || "",
+          browserSize: input.audio.size
+        }
+      },
+      response: { error: errorMessage },
+      chatMessage: { id: createId(), role: "assistant", text: errorMessage, createdAt: new Date().toISOString() },
       audio: null
     };
   }
@@ -344,6 +358,82 @@ function isAudioAnalyserOutput(value: unknown): value is AudioAnalyserOutput {
 
 function withoutFullAudio<T extends { audioBase64: string }>(request: T) {
   return { ...request, audioBase64: `[base64 length=${request.audioBase64.length}]` };
+}
+
+async function normalizeAudioBlobForOpenAi(blob: Blob): Promise<{ blob: Blob; audioFormat: "wav" | "mp3"; conversion: string }> {
+  const type = blob.type.toLowerCase();
+  if (type.includes("wav") || type.includes("wave")) {
+    return { blob, audioFormat: "wav", conversion: "already_wav" };
+  }
+  if (type.includes("mpeg") || type.includes("mp3")) {
+    return { blob, audioFormat: "mp3", conversion: "already_mp3" };
+  }
+  return {
+    blob: await convertBrowserAudioBlobToWav(blob),
+    audioFormat: "wav",
+    conversion: `converted_from_${blob.type || "unknown"}_to_wav`
+  };
+}
+
+async function convertBrowserAudioBlobToWav(blob: Blob): Promise<Blob> {
+  const AudioContextConstructor = window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AudioContextConstructor) {
+    throw new Error("Browser cannot convert microphone audio to WAV: AudioContext is unavailable.");
+  }
+  const context = new AudioContextConstructor();
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+    const audioBuffer = await context.decodeAudioData(arrayBuffer.slice(0));
+    return encodeAudioBufferAsWav(audioBuffer);
+  } catch (error) {
+    throw new Error(`Browser could not convert microphone audio (${blob.type || "unknown"}) to WAV: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    await context.close().catch(() => undefined);
+  }
+}
+
+function encodeAudioBufferAsWav(audioBuffer: AudioBuffer) {
+  const channelCount = audioBuffer.numberOfChannels;
+  const frameCount = audioBuffer.length;
+  const sampleRate = audioBuffer.sampleRate;
+  const bytesPerSample = 2;
+  const blockAlign = channelCount * bytesPerSample;
+  const dataSize = frameCount * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  let offset = 0;
+
+  offset = writeAscii(view, offset, "RIFF");
+  view.setUint32(offset, 36 + dataSize, true); offset += 4;
+  offset = writeAscii(view, offset, "WAVE");
+  offset = writeAscii(view, offset, "fmt ");
+  view.setUint32(offset, 16, true); offset += 4;
+  view.setUint16(offset, 1, true); offset += 2;
+  view.setUint16(offset, channelCount, true); offset += 2;
+  view.setUint32(offset, sampleRate, true); offset += 4;
+  view.setUint32(offset, sampleRate * blockAlign, true); offset += 4;
+  view.setUint16(offset, blockAlign, true); offset += 2;
+  view.setUint16(offset, bytesPerSample * 8, true); offset += 2;
+  offset = writeAscii(view, offset, "data");
+  view.setUint32(offset, dataSize, true); offset += 4;
+
+  const channels = Array.from({ length: channelCount }, (_, index) => audioBuffer.getChannelData(index));
+  for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+    for (let channelIndex = 0; channelIndex < channelCount; channelIndex += 1) {
+      const sample = Math.max(-1, Math.min(1, channels[channelIndex][frameIndex]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += 2;
+    }
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function writeAscii(view: DataView, offset: number, text: string) {
+  for (let index = 0; index < text.length; index += 1) {
+    view.setUint8(offset + index, text.charCodeAt(index));
+  }
+  return offset + text.length;
 }
 
 async function blobToBase64(blob: Blob) {
