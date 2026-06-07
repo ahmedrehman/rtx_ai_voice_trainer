@@ -4,7 +4,8 @@ import { readFileSync } from "node:fs";
 import { networkInterfaces } from "node:os";
 import { createServer as createViteServer } from "vite";
 import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "./mod_ai_calls";
-import { AUDIO_ANALYSER, createAudioAnalyserDefaultPrompts, createAudioTurnDefaultPrompts } from "./lib_server_ai_voice";
+import { createAudioTurnDefaultPrompts } from "./lib_server_ai_voice";
+import { VOICE_AGENT_BACKEND, type VoiceAgentServerAnalyseRequest } from "./voice_agent";
 import type { Env } from "./server/bindings";
 import { clearCostLedger, getCostLedger, listProviders, runCorrection } from "./server/app";
 import { openLocalCostDb } from "./server/localDb";
@@ -256,51 +257,25 @@ async function realMethod(request: IncomingMessage) {
     return { error: "AUDIO_ANALYSER is not connected." };
   }
 
-  const body = JSON.parse((await readBuffer(request)).toString("utf8")) as {
-    audioBase64?: string;
-    audioFormat?: string;
-    textUserChat?: string;
-    history5LastTextChats?: unknown[];
-    provider?: string;
-    systemPrompt?: string;
-    additionalInstructions?: string;
-    settings?: { languageName?: string; topic?: string; keyword?: string; keywordOn?: string; keywordOff?: string };
-    promptConfig?: { systemTask?: string; howToRespond?: string; responseJsonFormat?: string };
-    voice?: string;
-  };
-  const settings = body.settings || {};
-  const promptConfig = body.promptConfig || {};
-  const defaultPrompts = createAudioAnalyserDefaultPrompts({
-    languageName: settings.languageName,
-    topic: settings.topic,
-    keywordOn: settings.keywordOn || settings.keyword || "on",
-    keywordOff: settings.keywordOff || "off"
-  });
+  const body = JSON.parse((await readBuffer(request)).toString("utf8")) as VoiceAgentServerAnalyseRequest;
+  const settings = VOICE_AGENT_BACKEND.CREATE_SERVER_SETTINGS(body);
 
   try {
-    return await AUDIO_ANALYSER(
+    return await VOICE_AGENT_BACKEND.ANALYSE_AUDIO(
       {
         provider: "openai",
         implementation: "openai-audio",
         openAiApiKey: apiKey,
         audioModel: "gpt-audio",
-        voice: body.voice || "coral"
+        voice: settings.voice
       },
       {
-        provider: "openai",
-        systemPrompt: {
-          systemPrompt: body.systemPrompt || defaultPrompts.systemPrompt,
-          task: promptConfig.systemTask || defaultPrompts.task,
-          responseJsonFormat: promptConfig.responseJsonFormat || defaultPrompts.responseJsonFormat,
-          howToRespond: [body.additionalInstructions, promptConfig.howToRespond || defaultPrompts.howToRespond].filter(Boolean).join("\n")
-        },
+        settings,
+        audioBase64: String(body.audioBase64 || ""),
+        audioFormat: body.audioFormat || "webm",
         textUserChat: body.textUserChat || "",
-        audioUserAudio: {
-          audioBase64: String(body.audioBase64 || ""),
-          audioFormat: body.audioFormat || "webm"
-        },
-        history5LastTextChats: body.history5LastTextChats || [],
-        voice: body.voice || "coral"
+        history5LastTextChats: VOICE_AGENT_BACKEND.NORMALIZE_HISTORY(body.history5LastTextChats),
+        additionalInstructions: body.additionalInstructions || ""
       }
     );
   } catch (error) {
