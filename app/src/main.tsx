@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Archive, BookOpen, Database, FileAudio, Home, Menu, Mic, Server, Volume2, X } from "lucide-react";
 import type { DebugPageDefinition } from "./debug_page_types";
@@ -34,6 +34,7 @@ type StackItem = {
 };
 
 const localDebugDataStore = createLocalMemoryDataStore();
+const DEFAULT_TEST_AUDIO_URL = "/test-audio/sample-voice-test.wav";
 
 const pages: Page[] = [
   { id: "start", title: "Start", module: "Client Voice", role: "start page", ready: true, inputs: [], actions: [], output: [], icon: Home },
@@ -1043,6 +1044,7 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
   const [additionalInstructions, setAdditionalInstructions] = useState("Keep it short.");
   const [audio, setAudio] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
+  const [audioSourceLabel, setAudioSourceLabel] = useState("No audio selected.");
   const [textUserChat, setTextUserChat] = useState("Bonjour, je veux tester ma voix.");
   const [textChat, setTextChat] = useState("");
   const [historyText, setHistoryText] = useState("[]");
@@ -1056,11 +1058,36 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
   const needsAudio = methodId !== "PRIMITIVE_TEXT_TO_AUDIO";
   const needsPrompts = methodId === "AUDIO_TO_AI_TEXT_AND_AUDIO" || methodId === "AUDIO_ANALYSER";
 
-  function selectAudio(file: File | null) {
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
+  function selectAudio(file: File | null, label = "User selected audio.") {
     setAudio(file);
-    setAudioUrl(file ? URL.createObjectURL(file) : "");
+    setAudioSourceLabel(file ? label : "No audio selected.");
+    setAudioUrl((currentUrl) => {
+      if (currentUrl) URL.revokeObjectURL(currentUrl);
+      return file ? URL.createObjectURL(file) : "";
+    });
   }
+
+  useEffect(() => {
+    if (!needsAudio) return;
+    let cancelled = false;
+
+    async function loadDefaultTestAudio() {
+      try {
+        const response = await fetch(DEFAULT_TEST_AUDIO_URL);
+        if (!response.ok) return;
+        const blob = await response.blob();
+        if (cancelled) return;
+        selectAudio(new File([blob], "sample-voice-test.wav", { type: blob.type || "audio/wav" }), "Default example audio.");
+      } catch {
+        if (!cancelled) selectAudio(null);
+      }
+    }
+
+    void loadDefaultTestAudio();
+    return () => {
+      cancelled = true;
+    };
+  }, [methodId, needsAudio]);
 
   async function runServerMethod() {
     const audioInput = audio ? { size: audio.size, type: audio.type, name: audio.name } : null;
@@ -1293,13 +1320,15 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
             <>
               <label className="field">
                 <span>audio file</span>
-                <input type="file" accept="audio/*" onChange={(event) => selectAudio(event.target.files?.[0] || null)} />
-                <small>Required input audio sent to the server endpoint.</small>
+                <input type="file" accept="audio/*" onChange={(event) => selectAudio(event.target.files?.[0] || null, "User selected audio.")} />
+                <small>Required input audio sent to the server endpoint. Default sample: /test-audio/sample-voice-test.wav.</small>
               </label>
               {audioUrl ? (
                 <section className="input-audio-preview">
                   <h2>Selected input audio</h2>
+                  <p>{audioSourceLabel}</p>
                   <audio controls src={audioUrl} />
+                  <button className="secondary-button" type="button" onClick={() => selectAudio(null)}>Remove selected audio</button>
                 </section>
               ) : (
                 <section className="not-implemented">REQUIRED INPUT AUDIO: NOT SELECTED</section>
