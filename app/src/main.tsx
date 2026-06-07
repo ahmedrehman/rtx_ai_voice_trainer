@@ -17,6 +17,8 @@ type StackItem = {
   type: string;
   status: "running" | "ok" | "error";
   createdAt: string;
+  business?: unknown;
+  steps?: Array<{ label: string; state: "pending" | "running" | "done" | "error" | "not_implemented"; detail: string }>;
   input?: unknown;
   output?: unknown;
   error?: unknown;
@@ -131,6 +133,7 @@ function MeaningfulAudioChunkDebug() {
   const [speechCheckLang, setSpeechCheckLang] = useState("fr-FR");
   const [mimeType, setMimeType] = useState("");
   const [running, setRunning] = useState(false);
+  const [listenerState, setListenerState] = useState<"idle" | "listening" | "ended" | "error">("idle");
   const [audioUrl, setAudioUrl] = useState("");
   const [stack, setStack] = useState<StackItem[]>([]);
 
@@ -161,13 +164,24 @@ function MeaningfulAudioChunkDebug() {
         requestedMedia: { audio: true, video: false }
       }
     };
+    const steps: StackItem["steps"] = [
+      { label: "Real audio silence detection", state: "not_implemented", detail: "Not implemented. No microphone volume/RMS/VAD check exists." },
+      { label: "Create input object", state: "done", detail: "Input values captured from page." },
+      { label: "Request microphone", state: "running", detail: "Browser will ask/allow microphone. Request is audio only, video false." },
+      { label: "Start recorder", state: "pending", detail: "MediaRecorder has not started yet." },
+      { label: "Speech helper", state: "pending", detail: "Browser SpeechRecognition may start if available." },
+      { label: "Stop recording", state: "pending", detail: "Not stopped yet." },
+      { label: "Decide chunk", state: "pending", detail: "No chunk decision yet." }
+    ];
     const id = pushStack({
       type: "SYSTEM_MEANINGFUL_AUDIO_CHUNK",
       status: "running",
+      steps,
       input
     });
 
     setRunning(true);
+    setListenerState("listening");
     try {
       const result = await SYSTEM_MEANINGFUL_AUDIO_CHUNK(
         {
@@ -189,9 +203,56 @@ function MeaningfulAudioChunkDebug() {
 
       if (audioUrl) URL.revokeObjectURL(audioUrl);
       const nextUrl = result.audio ? URL.createObjectURL(result.audio) : "";
+      const speechCheckerAvailable = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+      const speechFound = Boolean(result.browserSpeechText?.trim());
+      const audioRecorded = Boolean(result.audio && result.audio.size > 0);
+      const stoppedBecauseMaxDuration = result.chunkReason === "max_duration" || result.chunkReason === "no_speech_checker";
+      const business = {
+        method: "SYSTEM_MEANINGFUL_AUDIO_CHUNK",
+        business_target: "LISTENING TO VOICE",
+        this_function_role: "browser microphone chunk recorder plus optional browser speech helper",
+        did_check_for_speech: speechCheckerAvailable,
+        how_speech_was_checked: speechCheckerAvailable ? "browser SpeechRecognition helper" : "not checked; browser helper unavailable",
+        did_find_speech: speechFound,
+        found_text: result.browserSpeechText || "",
+        speech_check_language_requested: speechCheckLang,
+        speech_language_warning: speechFound ? "Browser helper text depends on speechCheckLang. If you spoke another language, this text can be wrong." : "",
+        did_record_audio_chunk: audioRecorded,
+        did_skip_chunk: false,
+        chunk_accepted_for_next_step: audioRecorded,
+        chunk_sent_to_ai: false,
+        why_stopped: humanChunkReason(result.chunkReason),
+        what_this_means: speechFound
+          ? "Browser helper heard text. Audio chunk was still recorded."
+          : stoppedBecauseMaxDuration
+            ? "No speech text was detected by the browser helper. Recording stopped by time limit. Audio chunk was still recorded."
+            : "Audio chunk was recorded.",
+        next_step_allowed: audioRecorded,
+        next_step_warning: speechFound ? "Next method can send this audio chunk to AI, but that is NOT done by this function." : "Speech was not confirmed. Sending this chunk to AI may waste money unless you intentionally want to test raw audio."
+      };
+      const outputSteps: StackItem["steps"] = [
+        { label: "Real audio silence detection", state: "not_implemented", detail: "Not implemented. The method did not measure volume, RMS, or VAD." },
+        { label: "Create input object", state: "done", detail: "Input values captured from page." },
+        { label: "Request microphone", state: result.status.ok ? "done" : "error", detail: "Requested audio only. No camera requested." },
+        { label: "Start recorder", state: audioRecorded ? "done" : "error", detail: audioRecorded ? "MediaRecorder produced an audio blob." : "No audio blob was produced." },
+        {
+          label: "Speech helper",
+          state: speechCheckerAvailable ? (speechFound ? "done" : "error") : "not_implemented",
+          detail: speechCheckerAvailable
+            ? speechFound
+              ? "Browser SpeechRecognition produced helper text."
+              : "Browser SpeechRecognition was available but produced no helper text."
+            : "Browser SpeechRecognition was unavailable."
+        },
+        { label: "Stop recording", state: "done", detail: humanChunkReason(result.chunkReason) },
+        { label: "Decide chunk", state: audioRecorded ? "done" : "error", detail: audioRecorded ? "Chunk accepted because audio exists. Speech was not required for acceptance." : "Chunk skipped because no audio exists." }
+      ];
       setAudioUrl(nextUrl);
+      setListenerState("ended");
       updateStack(id, {
         status: result.status.ok ? "ok" : "error",
+        business,
+        steps: outputSteps,
         output: {
           status: result.status,
           audio: result.audio ? {
@@ -206,8 +267,13 @@ function MeaningfulAudioChunkDebug() {
         error: result.status.error
       });
     } catch (error) {
+      setListenerState("error");
       updateStack(id, {
         status: "error",
+        steps: [
+          { label: "Real audio silence detection", state: "not_implemented", detail: "Not implemented." },
+          { label: "Run method", state: "error", detail: error instanceof Error ? error.message : String(error) }
+        ],
         error: error instanceof Error ? error.message : String(error)
       });
     } finally {
@@ -235,6 +301,10 @@ function MeaningfulAudioChunkDebug() {
       <div className="debug-grid">
         <section className="method-panel">
           <h2>Inputs</h2>
+          <div className={`listener-state ${listenerState}`}>
+            <strong>LISTENER STATE</strong>
+            <span>{listenerState}</span>
+          </div>
           <label className="field">
             <span>maxDurationMs</span>
             <input type="number" value={maxDurationMs} min={500} step={100} onChange={(event) => setMaxDurationMs(Number(event.target.value))} />
@@ -291,7 +361,27 @@ function MeaningfulAudioChunkDebug() {
                   <span>{item.status}</span>
                   <time>{new Date(item.createdAt).toLocaleTimeString()}</time>
                 </div>
+                {item.business !== undefined && (
+                  <section className="business-result">
+                    <h3>Business logic result</h3>
+                    <pre>{JSON.stringify(item.business, null, 2)}</pre>
+                  </section>
+                )}
+                {item.steps && (
+                  <section className="step-list">
+                    <h3>Steps</h3>
+                    {item.steps.map((step) => (
+                      <div className={`step ${step.state}`} key={`${item.id}-${step.label}`}>
+                        <strong>{step.label}</strong>
+                        <span>{step.state}</span>
+                        <p>{step.detail}</p>
+                      </div>
+                    ))}
+                  </section>
+                )}
                 <pre>{JSON.stringify({
+                  business: item.business,
+                  steps: item.steps,
                   input: item.input,
                   output: item.output,
                   error: item.error
@@ -303,6 +393,14 @@ function MeaningfulAudioChunkDebug() {
       </div>
     </section>
   );
+}
+
+function humanChunkReason(reason: string) {
+  if (reason === "browser_speech_final") return "browser speech helper reported final text";
+  if (reason === "silence_after_sound") return "NOT real silence; timer after browser speech helper result";
+  if (reason === "max_duration") return "time limit reached; no final browser speech result stopped it";
+  if (reason === "no_speech_checker") return "browser speech helper unavailable; time limit reached";
+  return reason;
 }
 
 function StaticPage({ page }: { page: Page }) {

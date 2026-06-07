@@ -214,6 +214,7 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
   let browserSpeechText = "";
   let stopReason: SystemMeaningfulAudioChunkOutput["chunkReason"] = Recognition ? "max_duration" : "no_speech_checker";
   let finished = false;
+  let speechCheckerAbortExpected = false;
   let silenceTimer: number | undefined;
   let maxTimer: number | undefined;
 
@@ -223,6 +224,7 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
     stopReason = reason;
     if (silenceTimer) window.clearTimeout(silenceTimer);
     if (maxTimer) window.clearTimeout(maxTimer);
+    speechCheckerAbortExpected = true;
     recognition?.abort();
     if (recorder.state === "recording") recorder.stop();
   }
@@ -284,6 +286,10 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
           silenceTimer = window.setTimeout(() => stop("silence_after_sound"), input.silenceMs || 900);
         };
         recognitionInstance.onerror = (event: { error: string }) => {
+          if (event.error === "aborted" && speechCheckerAbortExpected) {
+            log(config, "info", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", "browser speech checker stopped after chunk ended");
+            return;
+          }
           log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", `browser speech checker failed: ${event.error}`);
         };
         recognitionInstance.start();
