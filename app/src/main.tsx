@@ -12,9 +12,9 @@ import {
 } from "./lib_client_voice_system";
 import { createLocalMemoryDataStore } from "./lib_data_store";
 import type { DataStoreRecordType } from "./lib_data_store";
-import { CLIENT_VOICE_SYSTEM_DEBUG_PAGES } from "./lib_client_voice_system/_test";
-import { DATA_STORE_DEBUG_PAGES } from "./lib_data_store/_test";
-import { SERVER_AI_VOICE_DEBUG_PAGES } from "./lib_server_ai_voice/_test";
+import { CLIENT_VOICE_SYSTEM_DEBUG_PAGES } from "./lib_client_voice_system_test";
+import { DATA_STORE_DEBUG_PAGES } from "./lib_data_store_test";
+import { SERVER_AI_VOICE_DEBUG_PAGES } from "./lib_server_ai_voice_test";
 import { VOICE_AGENT_DEBUG_PAGES } from "./voice_agent_test";
 import { AUDIO_ANALYSER_DEFAULT_PROMPTS, createAudioAnalyserDefaultPrompts } from "./lib_server_ai_voice/audioAnalyserPrompts";
 import { AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS, createAudioTurnDefaultPrompts } from "./lib_server_ai_voice/audioTurnPrompts";
@@ -66,9 +66,9 @@ const pages: Page[] = [
 
 function iconForPage(page: DebugPageDefinition) {
   if (page.id === "MICROPHONE_AUDIO_REQUIREMENTS") return BookOpen;
-  if (page.module === "Voice Agent") return MessageSquare;
-  if (page.module === "Server AI Voice") return Server;
-  if (page.module === "Data Store") return page.id.includes("CLEAR") || page.id.includes("RESET") ? Archive : Database;
+  if (page.module === "voice_agent_test") return MessageSquare;
+  if (page.module === "lib_server_ai_voice_test") return Server;
+  if (page.module === "lib_data_store_test") return page.id.includes("CLEAR") || page.id.includes("RESET") ? Archive : Database;
   if (page.id.includes("TEXT")) return FileAudio;
   if (page.id.includes("SPEAKER") || page.id.includes("AUDIO")) return Volume2;
   return Mic;
@@ -201,7 +201,7 @@ function PageView({
       {page.id === "SYSTEM_TEXT_TO_AUDIO" && <TextToAudioDebug />}
       {page.id === "SYSTEM_AUDIO_TO_SPEAKER" && <AudioToSpeakerDebug />}
       {["PRIMITIVE_TEXT_TO_AUDIO", "PRIMITIVE_AUDIO_TO_TEXT", "AUDIO_TO_AI_TEXT_AND_AUDIO", "AUDIO_ANALYSER"].includes(page.id) && <ServerAiEndpointDebug key={page.id} methodId={page.id} />}
-      {page.module === "Data Store" && <DataStoreMethodDebug key={page.id} methodId={page.id} />}
+      {page.module === "lib_data_store_test" && <DataStoreMethodDebug key={page.id} methodId={page.id} />}
       {![
         "MICROPHONE_AUDIO_REQUIREMENTS",
         "APP_CHAT",

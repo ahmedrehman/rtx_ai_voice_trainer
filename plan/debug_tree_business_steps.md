@@ -27,6 +27,62 @@
 - Raw JSON must still be available for verification.
 - The page must make false readiness impossible.
 
+## Required Test Module Structure
+
+- Tests are their own visible modules.
+- Do not hide tests inside the production module folder.
+- Test module folder name must be:
+  - production module name
+  - plus `_test`
+- Examples:
+  - `lib_client_voice_system` -> `lib_client_voice_system_test`
+  - `lib_server_ai_voice` -> `lib_server_ai_voice_test`
+  - `lib_data_store` -> `lib_data_store_test`
+  - `voice_agent` -> `voice_agent_test`
+- The app debug menu must show these test module names.
+- The debug page `module` label must be the test module name.
+- Frontend/client methods live in their frontend test module.
+- Backend/server methods live in their backend test module.
+- A mixed module must still make each page say whether it tests frontend, backend, or full flow.
+
+## Required Test Module Files
+
+- One debug page = one file.
+- Debug page file name:
+  - `<method_or_page_id>.debug.ts`
+- One programmatic unit/business test case = one file.
+- Test file name:
+  - `<method_or_case>.test.ts`
+- Shared helpers are allowed only in clearly named helper files.
+- Index file only aggregates exports.
+- Index file must not contain page definitions.
+- Index file must not contain test cases.
+
+Example:
+
+```text
+voice_agent_test/
+  index.ts
+  voice_agent_text_chat.debug.ts
+  create_settings.test.ts
+  text_chat_missing_typed_text.test.ts
+  text_chat_missing_openai_config.test.ts
+  text_chat_real_answer.test.ts
+  text_chat_real_grammar_correction.test.ts
+  text_chat_real_latest_message.test.ts
+  text_chat_real_keyword_off.test.ts
+  test_env.ts
+```
+
+## Forbidden Test Structure
+
+- Do not use `module/_test` as the final structure.
+- Do not put all debug pages into one giant `index.ts`.
+- Do not put all unit tests into one giant `index.test.ts`.
+- Do not label a debug menu group with the production module name when it is a test module.
+- Do not make a debug page that has no matching visible file.
+- Do not make a test case that has no matching visible `.test.ts` file when programmatic testing is possible.
+
 ## Required Method Contract
 
 Each tested method must have a visible contract:
