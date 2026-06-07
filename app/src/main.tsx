@@ -243,7 +243,7 @@ function AppVoiceExperience({
   const [listenEnabled, setListenEnabled] = useState(false);
   const [speakEnabled, setSpeakEnabled] = useState(false);
   const [running, setRunning] = useState(false);
-  const [lastSignal, setLastSignal] = useState<{ type: "idle" | "ok" | "improvement" | "error"; text: string }>({ type: "idle", text: "Ready" });
+  const [lastSignal, setLastSignal] = useState<{ type: "idle" | "running" | "improvement" | "error"; text: string }>({ type: "idle", text: "" });
   const [lastAudioUrl, setLastAudioUrl] = useState("");
   const stopListenRef = useRef(false);
   const { stack, pushStack, updateStack } = useDebugStack();
@@ -256,7 +256,7 @@ function AppVoiceExperience({
       createdAt: new Date().toISOString()
     };
     setMessages([message]);
-    setLastSignal({ type: "idle", text: "Ready" });
+    setLastSignal({ type: "idle", text: "" });
   }, [settings.topic, settings.languageName]);
 
   async function runWithSampleAudio() {
@@ -273,7 +273,7 @@ function AppVoiceExperience({
     setMessages((current) => [...current, userMessage].slice(-30));
     setTextUserChat("");
     setRunning(true);
-    setLastSignal({ type: "idle", text: "Sending..." });
+    setLastSignal({ type: "running", text: "Sending..." });
     const id = debug ? pushStack({
       type: "VOICE_AGENT_TEXT_CHAT",
       status: "running",
@@ -298,7 +298,7 @@ function AppVoiceExperience({
       if (result.status.ok && resultJson?.flags.has_corrections) {
         setLastSignal({ type: "improvement", text: `Improvement: ${resultJson.flags.correction_type}` });
       } else if (result.status.ok) {
-        setLastSignal({ type: "ok", text: "Answer ready" });
+        setLastSignal({ type: "idle", text: "" });
       } else {
         setLastSignal({ type: "error", text: result.status.error || "Text chat failed" });
       }
@@ -371,7 +371,7 @@ function AppVoiceExperience({
       if (result.status.ok && resultJson?.flags.has_corrections) {
         setLastSignal({ type: "improvement", text: `Improvement: ${resultJson.flags.correction_type}` });
       } else if (result.status.ok) {
-        setLastSignal({ type: "ok", text: "Answer ready" });
+        setLastSignal({ type: "idle", text: "" });
       } else {
         setLastSignal({ type: "error", text: result.status.error || "Audio analysis failed" });
       }
@@ -484,10 +484,12 @@ function AppVoiceExperience({
           {debug && <span className="topic-pill">off: {settings.keywordOff}</span>}
         </div>
 
-        <div className={`app-signal ${lastSignal.type}`}>
-          <strong>{lastSignal.type === "improvement" ? "Has improvement" : lastSignal.type === "error" ? "Has error" : lastSignal.type === "ok" ? "Ready answer" : "Status"}</strong>
-          <span>{lastSignal.text}</span>
-        </div>
+        {lastSignal.type !== "idle" && (
+          <div className={`app-signal ${lastSignal.type}`}>
+            <strong>{lastSignal.type === "improvement" ? "Has improvement" : lastSignal.type === "error" ? "Has error" : "Working"}</strong>
+            <span>{lastSignal.text}</span>
+          </div>
+        )}
 
         <div className="chat-window">
           {messages.map((message) => (

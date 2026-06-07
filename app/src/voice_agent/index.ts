@@ -430,12 +430,30 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
   const startedAt = new Date().toISOString();
   const settings = VOICE_AGENT_CREATE_SERVER_SETTINGS(body);
   const prompts = VOICE_AGENT_CREATE_PROMPTS(settings);
-  const taskPrompt = [
-    prompts.task,
-    "TEXT CHAT MODE: no microphone audio is provided.",
+  const systemPrompt = [
+    "You are VOICE_AGENT_TEXT_CHAT, the typed-chat method for the voice trainer app.",
+    "You receive typed user text, topic settings, and recent text-chat history.",
+    "There is no microphone audio in this method.",
     "Do not judge pronunciation or accent in text-chat mode.",
-    "You may correct grammar, vocabulary, meaning, or answer normally from the typed text.",
-    "Return JSON only matching responseJsonFormat."
+    "Return exactly one JSON object. Do not wrap it in markdown.",
+    "chat_text_to_user must be non-empty and must contain the actual chat answer shown to the user."
+  ].join("\n");
+  const taskPrompt = [
+    `Target language: ${settings.languageName}.`,
+    `Topic/context: ${settings.topic}.`,
+    `Keyword ON exact word/phrase: ${settings.keywordOn}.`,
+    `Keyword OFF exact word/phrase: ${settings.keywordOff}.`,
+    "If the typed message is a normal chat message, answer it normally.",
+    "If the typed message has a useful language mistake, set has_corrections true and explain briefly.",
+    "In text-chat mode, correction_type may be grammar, vocabulary, meaning, or none. Do not use pronunciation/accent.",
+    "Set is_chat_answer_or_correction to chat_answer for a normal answer, correction for correction feedback, or none only for unusable input.",
+    "chat_text_to_user is the message displayed in the chat window. It must not be empty for normal input.",
+    "Keep chat_text_to_user short and natural.",
+    body.additionalInstructions || "",
+    prompts.howToRespond,
+    "",
+    "RESPONSE JSON FORMAT:",
+    prompts.responseJsonFormat
   ].join("\n");
   const requestForDebug: VoiceAgentTextChatOutput["debug"]["input"] = {
     ...body,
@@ -455,18 +473,18 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
       { openAiApiKey: config.openAiApiKey },
       {
         model: config.textModel,
-        systemPrompt: body.systemPrompt || prompts.systemPrompt,
+        systemPrompt,
         taskPrompt,
         userPayload: {
           textUserChat: body.textUserChat,
           history5LastTextChats: VOICE_AGENT_NORMALIZE_HISTORY(body.history5LastTextChats),
-          additionalInstructions: body.additionalInstructions || "",
-          responseJsonFormat: prompts.responseJsonFormat
+          topic: settings.topic,
+          languageName: settings.languageName
         }
       }
     );
-    const parsed = parseVoiceAgentJson(ai.rawText);
-    const chatText = parsed.chat_text_to_user || parsed.hint || "I read your message, but I could not create a useful short answer.";
+    const parsed = applyTextKeywordFlags(parseVoiceAgentJson(ai.rawText), body.textUserChat || "", settings);
+    const chatText = parsed.chat_text_to_user || parsed.hint || fallbackTextChatAnswer(body.textUserChat || "", settings);
     const audio = body.speakEnabled
       ? await createTextChatSpeech(config, settings, chatText).catch((error) => ({
           audioBase64: "",
@@ -482,7 +500,7 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
       debug: {
         input: requestForDebug,
         promptSent: {
-          systemPrompt: body.systemPrompt || prompts.systemPrompt,
+          systemPrompt,
           taskPrompt,
           responseJsonFormat: prompts.responseJsonFormat
         },
@@ -500,7 +518,7 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
       debug: {
         input: requestForDebug,
         promptSent: {
-          systemPrompt: body.systemPrompt || prompts.systemPrompt,
+          systemPrompt,
           taskPrompt,
           responseJsonFormat: prompts.responseJsonFormat
         },
@@ -572,7 +590,7 @@ function isVoiceAgentTextChatOutput(value: unknown): value is VoiceAgentTextChat
 
 function parseVoiceAgentJson(text: string): AudioAnalyserOutput["json"] {
   try {
-    const parsed = JSON.parse(text) as Partial<AudioAnalyserOutput["json"]>;
+    const parsed = JSON.parse(extractJsonObjectText(text)) as Partial<AudioAnalyserOutput["json"]>;
     return {
       flags: {
         keyword_on_sent: Boolean(parsed.flags?.keyword_on_sent),
@@ -600,6 +618,15 @@ function parseVoiceAgentJson(text: string): AudioAnalyserOutput["json"] {
   }
 }
 
+function extractJsonObjectText(text: string) {
+  const trimmed = text.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) return trimmed.slice(start, end + 1);
+  return trimmed;
+}
+
 function emptyVoiceAgentJson(message: string): AudioAnalyserOutput["json"] {
   return {
     flags: {
@@ -615,6 +642,50 @@ function emptyVoiceAgentJson(message: string): AudioAnalyserOutput["json"] {
     text_corrected: "",
     hint: ""
   };
+}
+
+function fallbackTextChatAnswer(textUserChat: string, settings: VoiceAgentSettings) {
+  const text = textUserChat.trim();
+  if (!text) return "Please type a message.";
+  if (settings.topicId === "french_for_german") {
+    return `I can help with this French sentence: "${text}".`;
+  }
+  if (settings.topicId === "history") {
+    return `Let's discuss this history question: "${text}".`;
+  }
+  return `I can answer this: "${text}".`;
+}
+
+function applyTextKeywordFlags(json: AudioAnalyserOutput["json"], textUserChat: string, settings: VoiceAgentSettings): AudioAnalyserOutput["json"] {
+  const detected = detectExactTextKeyword(textUserChat, settings);
+  if (detected.keyword_detected === "none") return json;
+  return {
+    ...json,
+    flags: {
+      ...json.flags,
+      keyword_on_sent: detected.keyword_detected === "on",
+      keyword_off_sent: detected.keyword_detected === "off",
+      keyword_detected: detected.keyword_detected,
+      keyword_exact_text: detected.keyword_exact_text
+    }
+  };
+}
+
+function detectExactTextKeyword(textUserChat: string, settings: VoiceAgentSettings) {
+  const text = normalizeKeywordText(textUserChat);
+  const keywordOff = normalizeKeywordText(settings.keywordOff);
+  const keywordOn = normalizeKeywordText(settings.keywordOn);
+  if (keywordOff && text.includes(keywordOff)) {
+    return { keyword_detected: "off" as const, keyword_exact_text: settings.keywordOff };
+  }
+  if (keywordOn && text.includes(keywordOn)) {
+    return { keyword_detected: "on" as const, keyword_exact_text: settings.keywordOn };
+  }
+  return { keyword_detected: "none" as const, keyword_exact_text: "" };
+}
+
+function normalizeKeywordText(value: string) {
+  return value.toLowerCase().trim().replace(/\s+/g, " ");
 }
 
 async function createTextChatSpeech(config: ServerAiConfig, settings: VoiceAgentSettings, text: string) {

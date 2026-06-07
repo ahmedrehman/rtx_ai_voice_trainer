@@ -275,17 +275,18 @@ p {
 
 .chat-toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
-  overflow-x: auto;
   padding-bottom: 2px;
 }
 
 .topic-select {
   display: grid;
   gap: 3px;
-  min-width: min(260px, 52vw);
+  flex: 1 1 220px;
+  min-width: min(220px, 100%);
 }
 
 .topic-select span {
@@ -297,6 +298,7 @@ p {
 
 .topic-select select {
   min-height: 38px;
+  width: 100%;
 }
 
 .toggle,
@@ -388,6 +390,12 @@ p {
   background: #fff7f7;
 }
 
+.app-signal.running {
+  border-color: #b8d4f8;
+  color: #0f4ca8;
+  background: #eef5ff;
+}
+
 .chat-window {
   display: flex;
   flex-direction: column;
@@ -440,6 +448,7 @@ p {
 .chat-composer {
   display: grid;
   grid-template-columns: 1fr auto;
+  align-items: end;
   gap: 8px;
 }
 
