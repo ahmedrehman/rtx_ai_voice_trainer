@@ -45,8 +45,8 @@ function App() {
   const [activePageId, setActivePageId] = useState("start");
   const [menuOpen, setMenuOpen] = useState(false);
   const activePage = pages.find((page) => page.id === activePageId) || pages[0];
-  const groups = useMemo(() => {
-    return pages.reduce<Record<string, Page[]>>((result, page) => {
+  const debugGroups = useMemo(() => {
+    return pages.filter((page) => page.id !== "start").reduce<Record<string, Page[]>>((result, page) => {
       result[page.module] = [...(result[page.module] || []), page];
       return result;
     }, {});
@@ -85,20 +85,30 @@ function App() {
           </button>
         </div>
         <nav className="nav-list">
-          {Object.entries(groups).map(([group, items]) => (
-            <section key={group}>
-              <h2>{group}</h2>
-              {items.map((page) => {
-                const Icon = page.icon;
-                return (
-                  <button key={page.id} className={page.id === activePage.id ? "active" : ""} onClick={() => selectPage(page.id)}>
-                    <Icon size={17} />
-                    <span>{page.title}</span>
-                  </button>
-                );
-              })}
-            </section>
-          ))}
+          <section>
+            <h2>App</h2>
+            <button className={activePage.id === "start" ? "active" : ""} onClick={() => selectPage("start")}>
+              <Home size={17} />
+              <span>Start</span>
+            </button>
+          </section>
+          <section>
+            <h2>Debug</h2>
+            {Object.entries(debugGroups).map(([group, items]) => (
+              <details className="nav-submenu" open key={group}>
+                <summary>{group}</summary>
+                {items.map((page) => {
+                  const Icon = page.icon;
+                  return (
+                    <button key={page.id} className={page.id === activePage.id ? "active" : ""} onClick={() => selectPage(page.id)}>
+                      <Icon size={17} />
+                      <span>{page.title}</span>
+                    </button>
+                  );
+                })}
+              </details>
+            ))}
+          </section>
         </nav>
       </aside>
 
@@ -131,6 +141,9 @@ function MeaningfulAudioChunkDebug() {
   const [maxDurationMs, setMaxDurationMs] = useState(5000);
   const [speechResultIdleMs, setSpeechResultIdleMs] = useState(900);
   const [speechCheckLang, setSpeechCheckLang] = useState("fr-FR");
+  const [chunkDecisionMode, setChunkDecisionMode] = useState<"auto" | "browser_speech_text" | "audio_energy">("auto");
+  const [energyThreshold, setEnergyThreshold] = useState(0.035);
+  const [minEnergyActiveMs, setMinEnergyActiveMs] = useState(250);
   const [mimeType, setMimeType] = useState("");
   const [running, setRunning] = useState(false);
   const [listenerState, setListenerState] = useState<"idle" | "listening" | "ended" | "error">("idle");
@@ -138,11 +151,13 @@ function MeaningfulAudioChunkDebug() {
   const [session, setSession] = useState({ active: false, chunks: 0, endedReason: "not started" });
   const [audioUrl, setAudioUrl] = useState("");
   const [stack, setStack] = useState<StackItem[]>([]);
-  const latestBusiness = stack.find((item) => item.business)?.business as Record<string, unknown> | undefined;
+  const latestBusiness = [...stack].reverse().find((item) => item.business)?.business as Record<string, unknown> | undefined;
+  const methodRuns = stack.filter((item) => item.type === "SYSTEM_MEANINGFUL_AUDIO_CHUNK");
+  const technicalLogs = stack.filter((item) => item.type !== "SYSTEM_MEANINGFUL_AUDIO_CHUNK");
 
   function pushStack(item: Omit<StackItem, "id" | "createdAt">) {
     const next = { id: createId(), createdAt: new Date().toISOString(), ...item };
-    setStack((current) => [next, ...current].slice(0, 30));
+    setStack((current) => [...current, next].slice(-30));
     return next.id;
   }
 
@@ -155,12 +170,16 @@ function MeaningfulAudioChunkDebug() {
       maxDurationMs,
       speechResultIdleMs,
       speechCheckLang,
+      chunkDecisionMode,
+      energyThreshold,
+      minEnergyActiveMs,
       mimeType: mimeType || undefined,
       runMode,
       browserNeeds: {
         secureContext: window.isSecureContext,
         getUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
         speechRecognitionChecker: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+        audioEnergyCheckImplemented: true,
         realAudioSilenceDetectionImplemented: false,
         microphoneVolumeDetectionImplemented: false,
         voiceActivityDetectionImplemented: false,
@@ -169,11 +188,12 @@ function MeaningfulAudioChunkDebug() {
       }
     };
     const steps: StackItem["steps"] = [
-      { label: "Real audio silence detection", state: "not_implemented", detail: "Not implemented. No microphone volume/RMS/VAD check exists." },
       { label: "Create input object", state: "done", detail: "Input values captured from page." },
       { label: "Request microphone", state: "running", detail: "Browser will ask/allow microphone. Request is audio only, video false." },
       { label: "Start recorder", state: "pending", detail: "MediaRecorder has not started yet." },
       { label: "Speech helper", state: "pending", detail: "Browser SpeechRecognition may start if available." },
+      { label: "Audio energy check", state: "pending", detail: "SYSTEM_AUDIO_ENERGY_CHECK will measure RMS energy during recording." },
+      { label: "Real VAD", state: "not_implemented", detail: "Not implemented. No WebRTC VAD or ML VAD exists yet." },
       { label: "Stop recording", state: "pending", detail: "Not stopped yet." },
       { label: "Decide chunk", state: "pending", detail: "No chunk decision yet." }
     ];
@@ -201,6 +221,9 @@ function MeaningfulAudioChunkDebug() {
           maxDurationMs,
           silenceMs: speechResultIdleMs,
           speechCheckLang,
+          chunkDecisionMode,
+          energyThreshold,
+          minEnergyActiveMs,
           mimeType: mimeType || undefined
         }
       );
@@ -209,11 +232,28 @@ function MeaningfulAudioChunkDebug() {
       const nextUrl = result.audio ? URL.createObjectURL(result.audio) : "";
       const speechCheckerAvailable = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
       const speechFound = Boolean(result.browserSpeechText?.trim());
+      const energyFound = Boolean(result.energyCheck.hasSound);
+      const actualDecisionMode = chunkDecisionMode === "auto"
+        ? (speechCheckerAvailable ? "browser_speech_text" : "audio_energy")
+        : chunkDecisionMode;
+      const speechConfirmedForDecision = actualDecisionMode === "browser_speech_text" ? speechFound : energyFound;
       const audioRecorded = Boolean(result.audio && result.audio.size > 0);
       const stoppedBecauseMaxDuration = result.chunkReason === "max_duration" || result.chunkReason === "no_speech_checker";
+      const usefulChunk = audioRecorded && speechConfirmedForDecision;
+      const usefulChunkReason = usefulChunk
+        ? `USEFUL: audio was recorded and ${actualDecisionMode === "browser_speech_text" ? "the browser speech helper returned text" : "the audio energy check crossed the threshold"}.`
+        : audioRecorded
+          ? `NOT USEFUL: audio was recorded, but the selected decision method (${actualDecisionMode}) did not confirm speech/sound. This chunk is skipped for AI.`
+          : "NOT USEFUL: no audio chunk was produced.";
       const business = {
         method: "SYSTEM_MEANINGFUL_AUDIO_CHUNK",
         business_target: "LISTENING TO VOICE",
+        BUSINESS_DECISION_USEFUL_CHUNK: usefulChunk ? "YES" : "NO",
+        business_decision: usefulChunk ? "USEFUL_CHUNK" : "NOT_USEFUL_CHUNK",
+        business_reason: usefulChunkReason,
+        send_to_ai: usefulChunk ? "NO_NOT_IMPLEMENTED_ON_THIS_PAGE" : "NO_SKIP_NOT_USEFUL",
+        configured_decision_mode: chunkDecisionMode,
+        actual_decision_mode_used: actualDecisionMode,
         this_function_role: "browser microphone chunk recorder plus optional browser speech helper",
         recording_active: runMode === "loop" && !stopRequestedRef.current,
         chunk_duration_target_ms: maxDurationMs,
@@ -222,25 +262,29 @@ function MeaningfulAudioChunkDebug() {
         how_speech_was_checked: speechCheckerAvailable ? "browser SpeechRecognition helper" : "not checked; browser helper unavailable",
         did_find_speech: speechFound,
         found_text: result.browserSpeechText || "",
+        did_check_audio_energy: result.energyCheck.available,
+        audio_energy_found_sound: energyFound,
+        audio_energy_check: result.energyCheck,
         speech_check_language_requested: speechCheckLang,
         speech_language_warning: speechFound ? "Browser helper text depends on speechCheckLang. If you spoke another language, this text can be wrong." : "",
         did_record_audio_chunk: audioRecorded,
-        did_skip_chunk: false,
-        chunk_accepted_for_next_step: audioRecorded,
+        did_skip_chunk: !usefulChunk,
+        chunk_accepted_for_next_step: usefulChunk,
         chunk_sent_to_ai: false,
         ai_function_name: "AUDIO_ANALYSER",
-        ai_send_status: "SKIPPED_NOT_IMPLEMENTED_ON_THIS_PAGE",
+        ai_send_status: usefulChunk ? "SKIPPED_NOT_IMPLEMENTED_ON_THIS_PAGE" : "SKIPPED_NOT_USEFUL_CHUNK",
         why_stopped: humanChunkReason(result.chunkReason),
-        what_this_means: speechFound
-          ? "Browser helper heard text. Audio chunk was still recorded."
+        what_this_means: usefulChunk
+          ? `Selected decision mode (${actualDecisionMode}) confirmed the chunk is useful.`
+          : speechFound
+            ? "Browser helper returned text, but the selected decision mode did not accept the chunk."
           : stoppedBecauseMaxDuration
-            ? "No speech text was detected by the browser helper. Recording stopped by time limit. Audio chunk was still recorded."
-            : "Audio chunk was recorded.",
-        next_step_allowed: audioRecorded,
-        next_step_warning: speechFound ? "Next method can send this audio chunk to AI, but that is NOT done by this function." : "Speech was not confirmed. Sending this chunk to AI may waste money unless you intentionally want to test raw audio."
+            ? "No speech text was detected by the browser helper. Recording stopped by time limit. This is NOT a useful chunk for AI."
+            : "Audio chunk was recorded, but usefulness depends on confirmed speech.",
+        next_step_allowed: usefulChunk,
+        next_step_warning: usefulChunk ? "Next method could send this audio chunk to AI, but that is NOT done by this function." : "Do not send to AI by default. Speech was not confirmed."
       };
       const outputSteps: StackItem["steps"] = [
-        { label: "Real audio silence detection", state: "not_implemented", detail: "Not implemented. The method did not measure volume, RMS, or VAD." },
         { label: "Create input object", state: "done", detail: "Input values captured from page." },
         { label: "Request microphone", state: result.status.ok ? "done" : "error", detail: "Requested audio only. No camera requested." },
         { label: "Start recorder", state: audioRecorded ? "done" : "error", detail: audioRecorded ? "MediaRecorder produced an audio blob." : "No audio blob was produced." },
@@ -253,8 +297,20 @@ function MeaningfulAudioChunkDebug() {
               : "Browser SpeechRecognition was available but produced no helper text."
             : "Browser SpeechRecognition was unavailable."
         },
+        {
+          label: "Audio energy check",
+          state: result.energyCheck.available ? (energyFound ? "done" : "error") : "not_implemented",
+          detail: result.energyCheck.available
+            ? `SYSTEM_AUDIO_ENERGY_CHECK: maxRms ${result.energyCheck.maxRms}, active ${result.energyCheck.activeMs}ms, threshold ${result.energyCheck.threshold}, required ${result.energyCheck.minActiveMs}ms.`
+            : `SYSTEM_AUDIO_ENERGY_CHECK unavailable. ${result.energyCheck.error || ""}`
+        },
+        { label: "Real VAD", state: "not_implemented", detail: "Not implemented. WebRTC VAD / ML VAD is not wired yet." },
         { label: "Stop recording", state: "done", detail: humanChunkReason(result.chunkReason) },
-        { label: "Decide chunk", state: audioRecorded ? "done" : "error", detail: audioRecorded ? "Chunk accepted because audio exists. Speech was not required for acceptance." : "Chunk skipped because no audio exists." }
+        {
+          label: "Business decision: useful chunk?",
+          state: usefulChunk ? "done" : "error",
+          detail: usefulChunk ? `YES. Decision method ${actualDecisionMode} confirmed the chunk.` : usefulChunkReason
+        }
       ];
       setAudioUrl(nextUrl);
       setListenerState("ended");
@@ -280,7 +336,6 @@ function MeaningfulAudioChunkDebug() {
       updateStack(id, {
         status: "error",
         steps: [
-          { label: "Real audio silence detection", state: "not_implemented", detail: "Not implemented." },
           { label: "Run method", state: "error", detail: error instanceof Error ? error.message : String(error) }
         ],
         error: error instanceof Error ? error.message : String(error)
@@ -319,6 +374,7 @@ function MeaningfulAudioChunkDebug() {
           session={session}
           speechCheckLang={speechCheckLang}
           maxDurationMs={maxDurationMs}
+          chunkDecisionMode={chunkDecisionMode}
         />
       </div>
 
@@ -345,6 +401,25 @@ function MeaningfulAudioChunkDebug() {
             <small>Only for browser SpeechRecognition helper. It tells the browser what language to expect when trying to produce helper text. It is NOT AI analysis and NOT required if SpeechRecognition is unavailable.</small>
           </label>
           <label className="field">
+            <span>chunkDecisionMode</span>
+            <select value={chunkDecisionMode} onChange={(event) => setChunkDecisionMode(event.target.value as "auto" | "browser_speech_text" | "audio_energy")}>
+              <option value="auto">auto: speech helper, else audio energy</option>
+              <option value="browser_speech_text">browser speech text only</option>
+              <option value="audio_energy">audio energy only</option>
+            </select>
+            <small>Business rule for USEFUL_CHUNK. Auto uses browser speech text when available; if not available, it uses SYSTEM_AUDIO_ENERGY_CHECK.</small>
+          </label>
+          <label className="field">
+            <span>energyThreshold</span>
+            <input type="number" value={energyThreshold} min={0.001} max={0.5} step={0.001} onChange={(event) => setEnergyThreshold(Number(event.target.value))} />
+            <small>RMS threshold for SYSTEM_AUDIO_ENERGY_CHECK. Lower is more sensitive and may accept noise.</small>
+          </label>
+          <label className="field">
+            <span>minEnergyActiveMs</span>
+            <input type="number" value={minEnergyActiveMs} min={50} step={50} onChange={(event) => setMinEnergyActiveMs(Number(event.target.value))} />
+            <small>Milliseconds above threshold required before audio energy mode marks the chunk useful.</small>
+          </label>
+          <label className="field">
             <span>mimeType</span>
             <input value={mimeType} onChange={(event) => setMimeType(event.target.value)} placeholder="empty = browser default" />
             <small>Optional MediaRecorder MIME type. Leave empty unless you know the browser supports it.</small>
@@ -356,6 +431,7 @@ function MeaningfulAudioChunkDebug() {
             getUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
             mediaRecorder: typeof MediaRecorder !== "undefined",
             speechRecognitionChecker: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+            systemAudioEnergyCheckImplemented: true,
             realAudioSilenceDetectionImplemented: false,
             microphoneVolumeDetectionImplemented: false,
             voiceActivityDetectionImplemented: false
@@ -380,48 +456,75 @@ function MeaningfulAudioChunkDebug() {
             <p>No audio recorded yet.</p>
           )}
 
-          <h2>Whole stack</h2>
-          {stack.length === 0 ? (
+          <h2>Business flow</h2>
+          {methodRuns.length === 0 ? (
             <p>No method call yet.</p>
           ) : (
-            stack.map((item) => (
-              <article className={`stack-item ${item.status}`} key={item.id}>
-                <div>
-                  <strong>{item.type}</strong>
-                  <span>{item.status}</span>
-                  <time>{new Date(item.createdAt).toLocaleTimeString()}</time>
-                </div>
-                {item.business !== undefined && (
-                  <section className="business-result">
-                    <h3>Business logic result</h3>
-                    <pre>{JSON.stringify(item.business, null, 2)}</pre>
-                  </section>
-                )}
-                {item.steps && (
-                  <section className="step-list">
-                    <h3>Steps</h3>
-                    {item.steps.map((step) => (
-                      <div className={`step ${step.state}`} key={`${item.id}-${step.label}`}>
-                        <strong>{step.label}</strong>
-                        <span>{step.state}</span>
-                        <p>{step.detail}</p>
-                      </div>
-                    ))}
-                  </section>
-                )}
-                <pre>{JSON.stringify({
-                  business: item.business,
-                  steps: item.steps,
-                  input: item.input,
-                  output: item.output,
-                  error: item.error
-                }, null, 2)}</pre>
-              </article>
+            methodRuns.map((item) => (
+              <StackArticle item={item} key={item.id} />
+            ))
+          )}
+
+          <h2>Technical log items</h2>
+          {technicalLogs.length === 0 ? (
+            <p>No logs yet.</p>
+          ) : (
+            technicalLogs.map((item) => (
+              <StackArticle item={item} key={item.id} compact />
             ))
           )}
         </section>
       </div>
     </section>
+  );
+}
+
+function StackArticle({ item, compact = false }: { item: StackItem; compact?: boolean }) {
+  const business = item.business as Record<string, unknown> | undefined;
+
+  return (
+    <article className={`stack-item ${item.status}`} key={item.id}>
+      <div>
+        <strong>{item.type}</strong>
+        <span>{item.status}</span>
+        <time>{new Date(item.createdAt).toLocaleTimeString()}</time>
+      </div>
+      {business !== undefined && (
+        <section className={`decision-result ${business.BUSINESS_DECISION_USEFUL_CHUNK === "YES" ? "yes" : "no"}`}>
+          <strong>BUSINESS DECISION: USEFUL CHUNK = {String(business.BUSINESS_DECISION_USEFUL_CHUNK)}</strong>
+          <span>SEND TO AI: {String(business.send_to_ai)}</span>
+          <p>{String(business.business_reason)}</p>
+        </section>
+      )}
+      {!compact && item.steps && (
+        <section className="step-list">
+          <h3>Business sequence</h3>
+          {item.steps.map((step) => (
+            <div className={`step ${step.state}`} key={`${item.id}-${step.label}`}>
+              <strong>{step.label}</strong>
+              <span>{step.state}</span>
+              <p>{step.detail}</p>
+            </div>
+          ))}
+        </section>
+      )}
+      {business !== undefined && (
+        <section className="business-result">
+          <h3>Business object</h3>
+          <pre>{JSON.stringify(business, null, 2)}</pre>
+        </section>
+      )}
+      <details>
+        <summary>Raw item JSON</summary>
+        <pre>{JSON.stringify({
+          business: item.business,
+          steps: item.steps,
+          input: item.input,
+          output: item.output,
+          error: item.error
+        }, null, 2)}</pre>
+      </details>
+    </article>
   );
 }
 
@@ -438,20 +541,35 @@ function BusinessTree({
   listenerState,
   session,
   speechCheckLang,
-  maxDurationMs
+  maxDurationMs,
+  chunkDecisionMode
 }: {
   latestBusiness?: Record<string, unknown>;
   listenerState: "idle" | "listening" | "ended" | "error";
   session: { active: boolean; chunks: number; endedReason: string };
   speechCheckLang: string;
   maxDurationMs: number;
+  chunkDecisionMode: "auto" | "browser_speech_text" | "audio_energy";
 }) {
   const hasText = Boolean(latestBusiness?.did_find_speech);
-  const chunkAccepted = Boolean(latestBusiness?.chunk_accepted_for_next_step);
+  const usefulChunk = latestBusiness?.BUSINESS_DECISION_USEFUL_CHUNK === "YES";
+  const audioRecorded = Boolean(latestBusiness?.did_record_audio_chunk);
+  const sendToAi = String(latestBusiness?.send_to_ai || "NO_NOT_RUN_YET");
+  const energyFound = Boolean(latestBusiness?.audio_energy_found_sound);
 
   return (
     <section className="business-tree">
       <h2>BUSINESS TARGET: LISTENING TO VOICE</h2>
+      <details open className={usefulChunk ? "decision-node yes" : "decision-node no"}>
+        <summary>
+          <span>BUSINESS DECISION: USEFUL CHUNK?</span>
+          <strong className={usefulChunk ? "state-done" : "state-not-useful"}>{usefulChunk ? "YES" : "NO"}</strong>
+        </summary>
+        <div className="tree-children">
+          <p>{String(latestBusiness?.business_reason || "No chunk has been recorded yet.")}</p>
+          <p>SEND TO AI: {sendToAi}</p>
+        </div>
+      </details>
       <details open>
         <summary>
           <span>RECORDING</span>
@@ -465,28 +583,34 @@ function BusinessTree({
 
       <details open>
         <summary>
-          <span>CHECKING SILENCE</span>
-          <strong className="state-not-implemented">NOT IMPLEMENTED - SKIP</strong>
+          <span>CHECKING SILENCE / SOUND ENERGY</span>
+          <strong className={energyFound ? "state-done" : "state-not-useful"}>{energyFound ? "HAS SOUND" : "NO SOUND - SKIP IN ENERGY MODE"}</strong>
         </summary>
         <div className="tree-children">
-          <p>No microphone volume/RMS/VAD silence check exists.</p>
+          <p>SYSTEM_AUDIO_ENERGY_CHECK is implemented. It measures microphone RMS energy. It is useful for skipping silence, but it is not real VAD.</p>
+          <details>
+            <summary>ENERGY RESULT JSON</summary>
+            <pre>{JSON.stringify(latestBusiness?.audio_energy_check || {
+              note: "No chunk has been recorded yet."
+            }, null, 2)}</pre>
+          </details>
         </div>
       </details>
 
       <details open>
         <summary>
-          <span>CHECKING VOICE ACTIVITY</span>
+          <span>CHECKING VOICE ACTIVITY / VAD</span>
           <strong className="state-not-implemented">NOT IMPLEMENTED - SKIP</strong>
         </summary>
         <div className="tree-children">
-          <p>No real voice activity detector exists.</p>
+          <p>No WebRTC VAD or ML VAD exists yet. Audio energy is only a cheaper fallback, not human-speech proof.</p>
         </div>
       </details>
 
       <details open>
         <summary>
           <span>CHECKING BROWSER VOICE TO SPEECH</span>
-          <strong className={hasText ? "state-done" : "state-skipped"}>{hasText ? "HAS TEXT - USE CHUNK" : "NO TEXT - USE CHUNK ANYWAY"}</strong>
+          <strong className={hasText ? "state-done" : "state-not-useful"}>{hasText ? "HAS TEXT" : "NO TEXT - SKIP CHUNK"}</strong>
         </summary>
         <div className="tree-children">
           <details>
@@ -510,16 +634,20 @@ function BusinessTree({
       <details open>
         <summary>
           <span>CHUNK SENT TO AI FUNCTION AUDIO_ANALYSER</span>
-          <strong className="state-not-implemented">SKIPPED - NOT IMPLEMENTED HERE</strong>
+          <strong className={usefulChunk ? "state-not-implemented" : "state-not-useful"}>{usefulChunk ? "SKIPPED - AI NOT IMPLEMENTED HERE" : "SKIPPED - NOT USEFUL"}</strong>
         </summary>
         <div className="tree-children">
           <details>
             <summary>REQUEST FULL</summary>
             <pre>{JSON.stringify({
               would_send_to: "AUDIO_ANALYSER",
-              chunk_accepted_for_next_step: chunkAccepted,
-              audio_chunk_exists: Boolean(latestBusiness?.did_record_audio_chunk),
-              note: "This page does not call AI yet."
+              useful_chunk: usefulChunk,
+              chunk_accepted_for_next_step: usefulChunk,
+              audio_chunk_exists: audioRecorded,
+              speech_text_exists: hasText,
+              audio_energy_has_sound: energyFound,
+              decision_mode: latestBusiness?.actual_decision_mode_used || chunkDecisionMode,
+              note: usefulChunk ? "This page does not call AI yet." : "Skipped because business decision is NOT USEFUL CHUNK."
             }, null, 2)}</pre>
           </details>
           <details>

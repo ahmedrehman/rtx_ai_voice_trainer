@@ -34,6 +34,7 @@ declare global {
   interface Window {
     SpeechRecognition?: new () => BrowserSpeechRecognition;
     webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+    webkitAudioContext?: typeof AudioContext;
   }
 }
 
@@ -56,6 +57,35 @@ export type SystemMeaningfulAudioChunkInput = {
   silenceMs?: number;
   speechCheckLang?: string;
   mimeType?: string;
+  chunkDecisionMode?: "auto" | "browser_speech_text" | "audio_energy";
+  energyThreshold?: number;
+  minEnergyActiveMs?: number;
+};
+
+export type SystemAudioEnergyCheckInput = {
+  stream: MediaStream;
+  threshold?: number;
+  minActiveMs?: number;
+  sampleEveryMs?: number;
+};
+
+export type SystemAudioEnergyCheckOutput = {
+  implemented: true;
+  available: boolean;
+  threshold: number;
+  minActiveMs: number;
+  activeMs: number;
+  maxRms: number;
+  averageRms: number;
+  hasSound: boolean;
+  sampleCount: number;
+  error?: string;
+};
+
+export type SystemAudioEnergyCheckController = {
+  start: () => void;
+  stop: () => void;
+  summary: () => SystemAudioEnergyCheckOutput;
 };
 
 export type SystemMicroToAudioOutput = {
@@ -72,6 +102,7 @@ export type SystemMeaningfulAudioChunkOutput = {
   durationMs: number;
   chunkReason: "browser_speech_final" | "silence_after_sound" | "max_duration" | "no_speech_checker";
   browserSpeechText?: string;
+  energyCheck: SystemAudioEnergyCheckOutput;
 };
 
 export type SystemAudioToSpeakerInput = {
@@ -175,20 +206,21 @@ export async function SYSTEM_MICRO_TO_AUDIO(config: ClientVoiceConfig, input: Sy
 export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, input: SystemMeaningfulAudioChunkInput): Promise<SystemMeaningfulAudioChunkOutput> {
   const startedAt = new Date().toISOString();
   log(config, "info", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", "start", input);
+  const unavailableEnergyCheck = emptyEnergyCheck(input.energyThreshold ?? 0.035, input.minEnergyActiveMs ?? 250);
   if (!navigator.mediaDevices?.getUserMedia) {
     const error = new Error("client microphone API not available");
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
-    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker" };
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", energyCheck: unavailableEnergyCheck };
   }
   if (typeof MediaRecorder === "undefined") {
     const error = new Error("client MediaRecorder API not available");
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
-    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker" };
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", energyCheck: unavailableEnergyCheck };
   }
   if (input.mimeType && typeof MediaRecorder.isTypeSupported === "function" && !MediaRecorder.isTypeSupported(input.mimeType)) {
     const error = new Error(`client MediaRecorder MIME type not supported: ${input.mimeType}`);
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
-    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType, durationMs: 0, chunkReason: "no_speech_checker" };
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType, durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", energyCheck: unavailableEnergyCheck };
   }
 
   let stream: MediaStream;
@@ -196,18 +228,22 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
     stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   } catch (error) {
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error instanceof Error ? error.message : "microphone permission failed");
-    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker" };
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", energyCheck: unavailableEnergyCheck };
   }
 
   const chunks: Blob[] = [];
   const startedMs = Date.now();
+  const energyThreshold = input.energyThreshold ?? 0.035;
+  const minEnergyActiveMs = input.minEnergyActiveMs ?? 250;
+  const energyCheck = SYSTEM_AUDIO_ENERGY_CHECK(config, { stream, threshold: energyThreshold, minActiveMs: minEnergyActiveMs });
   let recorder: MediaRecorder;
   try {
     recorder = new MediaRecorder(stream, input.mimeType ? { mimeType: input.mimeType } : undefined);
   } catch (error) {
+    energyCheck.stop();
     stream.getTracks().forEach((track) => track.stop());
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error instanceof Error ? error.message : "MediaRecorder creation failed");
-    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker" };
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", energyCheck: energyCheck.summary() };
   }
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   let recognition: BrowserSpeechRecognition | null = null;
@@ -234,28 +270,33 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
       if (event.data.size > 0) chunks.push(event.data);
     };
     recorder.onerror = () => {
+      energyCheck.stop();
       stream.getTracks().forEach((track) => track.stop());
       const error = new Error("client chunk recording failed");
       log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
-      resolve({ status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: recorder.mimeType || input.mimeType || "", durationMs: Date.now() - startedMs, chunkReason: stopReason, browserSpeechText });
+      resolve({ status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: recorder.mimeType || input.mimeType || "", durationMs: Date.now() - startedMs, chunkReason: stopReason, browserSpeechText, energyCheck: energyCheck.summary() });
     };
     recorder.onstop = () => {
+      energyCheck.stop();
       stream.getTracks().forEach((track) => track.stop());
       const mimeType = recorder.mimeType || input.mimeType || "audio/webm";
       const audio = new Blob(chunks, { type: mimeType });
+      const energySummary = energyCheck.summary();
       const output = {
         status: doneStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt),
         audio,
         mimeType,
         durationMs: Date.now() - startedMs,
         chunkReason: stopReason,
-        browserSpeechText
+        browserSpeechText,
+        energyCheck: energySummary
       };
       log(config, "info", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", "done", {
         size: audio.size,
         mimeType,
         chunkReason: stopReason,
-        browserSpeechText
+        browserSpeechText,
+        energyCheck: energySummary
       });
       resolve(output);
     };
@@ -263,11 +304,13 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
     try {
       recorder.start(250);
     } catch (error) {
+      energyCheck.stop();
       stream.getTracks().forEach((track) => track.stop());
       log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error instanceof Error ? error.message : "recording start failed");
-      resolve({ status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: recorder.mimeType || input.mimeType || "", durationMs: Date.now() - startedMs, chunkReason: stopReason, browserSpeechText });
+      resolve({ status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: recorder.mimeType || input.mimeType || "", durationMs: Date.now() - startedMs, chunkReason: stopReason, browserSpeechText, energyCheck: energyCheck.summary() });
       return;
     }
+    energyCheck.start();
     maxTimer = window.setTimeout(() => stop(Recognition ? "max_duration" : "no_speech_checker"), input.maxDurationMs);
 
     if (Recognition) {
@@ -298,6 +341,75 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
       }
     }
   });
+}
+
+export function SYSTEM_AUDIO_ENERGY_CHECK(config: ClientVoiceConfig, input: SystemAudioEnergyCheckInput): SystemAudioEnergyCheckController {
+  const method = "SYSTEM_AUDIO_ENERGY_CHECK";
+  const threshold = input.threshold ?? 0.035;
+  const minActiveMs = input.minActiveMs ?? 250;
+  const sampleEveryMs = input.sampleEveryMs ?? 50;
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  let context: AudioContext | null = null;
+  let timer: number | undefined;
+  let available = Boolean(AudioContextCtor);
+  let error = "";
+  let sampleCount = 0;
+  let activeMs = 0;
+  let maxRms = 0;
+  let totalRms = 0;
+
+  function start() {
+    log(config, "info", method, "start", { threshold, minActiveMs, sampleEveryMs });
+    if (!AudioContextCtor) return;
+    try {
+      context = new AudioContextCtor();
+      const source = context.createMediaStreamSource(input.stream);
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      source.connect(analyser);
+      const samples = new Uint8Array(analyser.fftSize);
+      timer = window.setInterval(() => {
+        analyser.getByteTimeDomainData(samples);
+        let sum = 0;
+        for (let index = 0; index < samples.length; index += 1) {
+          const centered = (samples[index] - 128) / 128;
+          sum += centered * centered;
+        }
+        const rms = Math.sqrt(sum / samples.length);
+        sampleCount += 1;
+        totalRms += rms;
+        maxRms = Math.max(maxRms, rms);
+        if (rms >= threshold) activeMs += sampleEveryMs;
+      }, sampleEveryMs);
+    } catch (caught) {
+      available = false;
+      error = caught instanceof Error ? caught.message : String(caught);
+      log(config, "error", method, error);
+    }
+  }
+
+  function stop() {
+    if (timer) window.clearInterval(timer);
+    void context?.close().catch(() => undefined);
+    log(config, "info", method, "done", summary());
+  }
+
+  function summary() {
+    return {
+      implemented: true as const,
+      available,
+      threshold,
+      minActiveMs,
+      activeMs,
+      maxRms: Number(maxRms.toFixed(5)),
+      averageRms: Number((sampleCount ? totalRms / sampleCount : 0).toFixed(5)),
+      hasSound: available && activeMs >= minActiveMs,
+      sampleCount,
+      error: error || undefined
+    };
+  }
+
+  return { start, stop, summary };
 }
 
 export async function SYSTEM_AUDIO_TO_SPEAKER(config: ClientVoiceConfig, input: SystemAudioToSpeakerInput): Promise<SystemAudioToSpeakerOutput> {
@@ -381,6 +493,21 @@ export async function SYSTEM_AUDIO_TO_TEXT(config: ClientVoiceConfig, input: Sys
 
 function log(config: ClientVoiceConfig, level: "info" | "error", method: string, message: string, data?: unknown) {
   config.logger?.({ level, method, message, data, createdAt: new Date().toISOString() });
+}
+
+function emptyEnergyCheck(threshold: number, minActiveMs: number): SystemAudioEnergyCheckOutput {
+  return {
+    implemented: true,
+    available: false,
+    threshold,
+    minActiveMs,
+    activeMs: 0,
+    maxRms: 0,
+    averageRms: 0,
+    hasSound: false,
+    sampleCount: 0,
+    error: "microphone stream was not available"
+  };
 }
 
 function doneStatus(method: string, startedAt: string): MethodStatus {
