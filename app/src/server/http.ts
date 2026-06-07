@@ -1,9 +1,10 @@
 import type { Env } from "./bindings";
-import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "../mod_ai_calls";
+import { DUMBB_TEXT_TO_SPEACH, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "../mod_ai_calls";
 import { createAudioTurnDefaultPrompts } from "../lib_server_ai_voice";
 import { VOICE_AGENT_BACKEND, type VoiceAgentServerAnalyseRequest, type VoiceAgentTextChatRequest } from "../voice_agent";
 import { clearCostLedger, getCostLedger, listProviders, runCorrection } from "./app";
 import { json, methodNotAllowed, notFound } from "./responses";
+import { transcribeOpenAiFormData } from "./transcriptionEndpoint";
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
@@ -74,11 +75,7 @@ async function transcribeAudio(request: Request, env: Env) {
   }
 
   const formData = await request.formData();
-  if (!formData.has("model")) {
-    formData.set("model", "gpt-4o-mini-transcribe");
-  }
-
-  return DUMB_SPEACH_TO_TEXT_transcription({ openAiApiKey: env.OPENAI_API_KEY }, formData);
+  return transcribeOpenAiFormData(env.OPENAI_API_KEY, formData);
 }
 
 async function speakAudio(request: Request, env: Env) {

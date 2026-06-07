@@ -1287,6 +1287,26 @@ function AudioToSpeakerDebug() {
   const [running, setRunning] = useState(false);
   const { stack, pushStack, updateStack } = useDebugStack();
 
+  useEffect(() => {
+    let active = true;
+    let objectUrl = "";
+    void fetch(DEFAULT_TEST_AUDIO_URL)
+      .then((response) => response.blob())
+      .then((blob) => {
+        if (!active) return;
+        objectUrl = URL.createObjectURL(blob);
+        setAudio(blob);
+        setAudioUrl(objectUrl);
+      })
+      .catch(() => {
+        // The page still allows a manual file if the bundled sample cannot load.
+      });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, []);
+
   function selectAudio(file: File | null) {
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setAudio(file);
@@ -1360,7 +1380,7 @@ function AudioToSpeakerDebug() {
           <label className="field">
             <span>audio file</span>
             <input type="file" accept="audio/*" onChange={(event) => selectAudio(event.target.files?.[0] || null)} />
-            <small>Select an audio file/blob to play through SYSTEM_AUDIO_TO_SPEAKER.</small>
+            <small>Default sample audio is loaded for first-click playback. You can replace it with your own file.</small>
           </label>
           <button className="run-button" type="button" onClick={() => void runPlayback()} disabled={running}>{running ? "Playing..." : "Play selected audio"}</button>
         </>
@@ -1636,6 +1656,7 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
       } else if (methodId === "PRIMITIVE_AUDIO_TO_TEXT") {
         const form = new FormData();
         form.set("file", audio as File);
+        form.set("model", "gpt-4o-mini-transcribe");
         form.set("systemPrompt", systemPrompt);
         form.set("additionalInstructions", additionalInstructions);
         form.set("textChat", textChat);
