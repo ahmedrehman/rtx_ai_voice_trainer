@@ -636,7 +636,6 @@ function VoiceAgentStreamTextChatTestPage({ settings }: { settings: VoiceAgentSe
   const [historyText, setHistoryText] = useState("[]");
   const [streamText, setStreamText] = useState("");
   const [running, setRunning] = useState(false);
-  const prompts = VOICE_AGENT_CREATE_PROMPTS(settings);
   const { stack, pushStack, updateStack } = useDebugStack();
 
   async function runStreamTextChatTest() {
@@ -646,8 +645,7 @@ function VoiceAgentStreamTextChatTestPage({ settings }: { settings: VoiceAgentSe
       methodId: "VOICE_AGENT_STREAM_TEXT_CHAT",
       settings,
       textUserChat,
-      history5LastTextChats: history,
-      promptConfig: prompts
+      history5LastTextChats: history
     };
     setStreamText("");
     const id = pushStack({
@@ -655,7 +653,7 @@ function VoiceAgentStreamTextChatTestPage({ settings }: { settings: VoiceAgentSe
       status: "running",
       input,
       steps: [
-        { label: "Build request", state: "done", detail: "Text, topic settings, history, and prompt config are visible on this page." },
+        { label: "Build request", state: "done", detail: "Text, topic settings, history, and stream response rule are visible on this page." },
         { label: "Call stream endpoint", state: "running", detail: "POST /api/voice-agent/text-chat-stream." },
         { label: "Read stream events", state: "pending", detail: "Waiting for start, delta, and done/error events." }
       ]
@@ -673,7 +671,7 @@ function VoiceAgentStreamTextChatTestPage({ settings }: { settings: VoiceAgentSe
       updateStack(id, {
         status: result.status.ok ? "ok" : "error",
         steps: [
-          { label: "Build request", state: "done", detail: "Text, topic settings, history, and prompt config are visible on this page." },
+          { label: "Build request", state: "done", detail: "Text, topic settings, history, and stream response rule are visible on this page." },
           { label: "Call stream endpoint", state: result.events.some((event) => event.type === "start") ? "done" : "error", detail: result.events.some((event) => event.type === "start") ? "Server started streaming." : "No stream start event received." },
           { label: "Read delta events", state: result.text ? "done" : result.status.ok ? "done" : "error", detail: result.text ? `Received ${result.text.length} characters.` : "No text delta received." },
           { label: "Business result: streamed answer", state: result.status.ok ? "done" : "error", detail: result.status.ok ? result.text : String(result.status.error || "Stream failed.") }
@@ -706,7 +704,7 @@ function VoiceAgentStreamTextChatTestPage({ settings }: { settings: VoiceAgentSe
           <h2>Prompt Inputs</h2>
           <label className="field"><span>topic</span><input value={settings.topic} readOnly /></label>
           <label className="field"><span>languageName</span><input value={settings.languageName} readOnly /></label>
-          <label className="field"><span>howToRespond</span><textarea value={prompts.howToRespond} readOnly rows={4} /></label>
+          <label className="field"><span>stream response rule</span><textarea value={"Answer in plain text only. Do not return JSON, markdown, field names, flags, debug text, or audio instructions."} readOnly rows={4} /></label>
           <small>The exact stream prompt sent by the server is shown in the start event under Real output / response.</small>
         </section>
       </div>

@@ -22,4 +22,5 @@ test("VOICE_AGENT_STREAM_TEXT_CHAT real OpenAI stream returns answer text", { ti
   assert.ok(done);
   assert.equal(done?.status.ok, true);
   assert.ok(text.trim().length > 0);
+  assert.doesNotMatch(text, /chat_text_to_user|^\s*\{/);
 });

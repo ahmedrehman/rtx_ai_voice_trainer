@@ -463,7 +463,6 @@ export async function VOICE_AGENT_SEND_TEXT_CHAT(input: VoiceAgentTextChatInput)
 export async function VOICE_AGENT_STREAM_TEXT_CHAT(input: VoiceAgentStreamTextChatInput): Promise<VoiceAgentStreamTextChatOutput> {
   const startedAt = new Date().toISOString();
   const endpoint = input.endpoint || "/api/voice-agent/text-chat-stream";
-  const prompts = VOICE_AGENT_CREATE_PROMPTS(input.settings);
   const request: VoiceAgentTextChatRequest = {
     textUserChat: input.textUserChat,
     history5LastTextChats: input.history5LastTextChats,
@@ -478,13 +477,7 @@ export async function VOICE_AGENT_STREAM_TEXT_CHAT(input: VoiceAgentStreamTextCh
       keywordOff: input.settings.keywordOff,
       voice: input.settings.voice
     },
-    systemPrompt: prompts.systemPrompt,
-    additionalInstructions: input.additionalInstructions || "",
-    promptConfig: {
-      systemTask: prompts.task,
-      howToRespond: prompts.howToRespond,
-      responseJsonFormat: prompts.responseJsonFormat
-    }
+    additionalInstructions: input.additionalInstructions || ""
   };
   const events: VoiceAgentStreamTextChatEvent[] = [];
   let text = "";
@@ -947,7 +940,6 @@ function errorStreamStatus(startedAt: string, error: string) {
 }
 
 function createStreamTextChatPrompt(settings: VoiceAgentSettings, body: VoiceAgentTextChatRequest): VoiceAgentStreamPrompt {
-  const prompts = VOICE_AGENT_CREATE_PROMPTS(settings);
   return {
     systemPrompt: [
       "You are VOICE_AGENT_STREAM_TEXT_CHAT, the fast typed-chat streaming method for the voice trainer app.",
@@ -965,7 +957,8 @@ function createStreamTextChatPrompt(settings: VoiceAgentSettings, body: VoiceAge
       `Keyword ON exact word/phrase: ${settings.keywordOn}.`,
       `Keyword OFF exact word/phrase: ${settings.keywordOff}.`,
       body.additionalInstructions || "",
-      prompts.howToRespond,
+      "Answer in plain text only.",
+      "Do not use the JSON response format from other voice-agent methods.",
       "",
       "LATEST USER MESSAGE:",
       body.textUserChat || "",
