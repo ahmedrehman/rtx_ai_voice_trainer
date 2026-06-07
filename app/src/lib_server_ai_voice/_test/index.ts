@@ -1,5 +1,6 @@
 import type { DebugPageDefinition } from "../../debug_page_types";
 import { AUDIO_ANALYSER_DEFAULT_PROMPTS } from "../audioAnalyserPrompts";
+import { AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS } from "../audioTurnPrompts";
 
 export type ServerAiVoiceTestId =
   | "PRIMITIVE_TEXT_TO_AUDIO"
@@ -62,9 +63,9 @@ const providerInputs = [
 ];
 
 const promptInputs = [
-  { key: "systemPrompt", label: "systemPrompt", kind: "textarea" as const, defaultValue: "You are a short voice trainer. Use original audio when audio is supplied.", required: true },
-  { key: "taskPrompt", label: "taskPrompt", kind: "textarea" as const, defaultValue: "Return short feedback and keep the answer testable.", required: true },
-  { key: "responseJsonFormat", label: "responseJsonFormat", kind: "json" as const, defaultValue: "{\n  \"flags\": {},\n  \"chat_text_to_user\": \"\",\n  \"text_corrected\": \"\",\n  \"hint\": \"\"\n}", required: true }
+  { key: "systemPrompt", label: "systemPrompt", kind: "textarea" as const, defaultValue: AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS.systemPrompt, required: true },
+  { key: "taskPrompt", label: "taskPrompt", kind: "textarea" as const, defaultValue: AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS.taskPrompt, required: true },
+  { key: "responseJsonFormat", label: "responseJsonFormat", kind: "json" as const, defaultValue: AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS.responseJsonFormat, required: true }
 ];
 
 export const SERVER_AI_VOICE_DEBUG_PAGES: DebugPageDefinition[] = [

@@ -16,6 +16,7 @@ import { CLIENT_VOICE_SYSTEM_DEBUG_PAGES } from "./lib_client_voice_system/_test
 import { DATA_STORE_DEBUG_PAGES } from "./lib_data_store/_test";
 import { SERVER_AI_VOICE_DEBUG_PAGES } from "./lib_server_ai_voice/_test";
 import { AUDIO_ANALYSER_DEFAULT_PROMPTS, createAudioAnalyserDefaultPrompts } from "./lib_server_ai_voice/audioAnalyserPrompts";
+import { AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS, createAudioTurnDefaultPrompts } from "./lib_server_ai_voice/audioTurnPrompts";
 import "./styles.css";
 
 type Page = DebugPageDefinition & {
@@ -1043,17 +1044,29 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
   const [keywordOn, setKeywordOn] = useState("on");
   const [keywordOff, setKeywordOff] = useState("off");
   const [style, setStyle] = useState("Speak as a calm trainer. Keep it short.");
-  const [systemPrompt, setSystemPrompt] = useState(methodId === "AUDIO_ANALYSER" ? AUDIO_ANALYSER_DEFAULT_PROMPTS.systemPrompt : "You are a short voice trainer.");
-  const [additionalInstructions, setAdditionalInstructions] = useState(methodId === "AUDIO_ANALYSER" ? "" : "Keep it short.");
+  const [systemPrompt, setSystemPrompt] = useState(
+    methodId === "AUDIO_ANALYSER"
+      ? AUDIO_ANALYSER_DEFAULT_PROMPTS.systemPrompt
+      : methodId === "AUDIO_TO_AI_TEXT_AND_AUDIO"
+        ? AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS.systemPrompt
+        : "You are a short voice trainer."
+  );
+  const [additionalInstructions, setAdditionalInstructions] = useState(methodId === "AUDIO_ANALYSER" || methodId === "AUDIO_TO_AI_TEXT_AND_AUDIO" ? "" : "Keep it short.");
   const [audio, setAudio] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
   const [audioSourceLabel, setAudioSourceLabel] = useState("No audio selected.");
   const [textUserChat, setTextUserChat] = useState("Bonjour, je veux tester ma voix.");
   const [textChat, setTextChat] = useState("");
   const [historyText, setHistoryText] = useState("[]");
-  const [systemTask, setSystemTask] = useState(methodId === "AUDIO_ANALYSER" ? AUDIO_ANALYSER_DEFAULT_PROMPTS.task : "You are a French voice trainer. Judge pronunciation from original audio.");
-  const [howToRespond, setHowToRespond] = useState(methodId === "AUDIO_ANALYSER" ? AUDIO_ANALYSER_DEFAULT_PROMPTS.howToRespond : "Return JSON text and short spoken audio. Keep it short.");
-  const [responseJsonFormat, setResponseJsonFormat] = useState(methodId === "AUDIO_ANALYSER" ? AUDIO_ANALYSER_DEFAULT_PROMPTS.responseJsonFormat : "{\n  \"flags\": {},\n  \"chat_text_to_user\": \"\",\n  \"text_corrected\": \"\",\n  \"hint\": \"\"\n}");
+  const [systemTask, setSystemTask] = useState(
+    methodId === "AUDIO_ANALYSER"
+      ? AUDIO_ANALYSER_DEFAULT_PROMPTS.task
+      : methodId === "AUDIO_TO_AI_TEXT_AND_AUDIO"
+        ? AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS.taskPrompt
+        : "You are a French voice trainer. Judge pronunciation from original audio."
+  );
+  const [howToRespond, setHowToRespond] = useState(methodId === "AUDIO_ANALYSER" ? AUDIO_ANALYSER_DEFAULT_PROMPTS.howToRespond : methodId === "AUDIO_TO_AI_TEXT_AND_AUDIO" ? AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS.howToRespond : "Return JSON text and short spoken audio. Keep it short.");
+  const [responseJsonFormat, setResponseJsonFormat] = useState(methodId === "AUDIO_ANALYSER" ? AUDIO_ANALYSER_DEFAULT_PROMPTS.responseJsonFormat : methodId === "AUDIO_TO_AI_TEXT_AND_AUDIO" ? AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS.responseJsonFormat : "{\n  \"flags\": {},\n  \"chat_text_to_user\": \"\",\n  \"text_corrected\": \"\",\n  \"hint\": \"\"\n}");
   const [running, setRunning] = useState(false);
   const [outputAudioUrl, setOutputAudioUrl] = useState("");
   const { stack, pushStack, updateStack } = useDebugStack();
@@ -1096,6 +1109,14 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
     const defaults = createAudioAnalyserDefaultPrompts({ languageName, keywordOn, keywordOff });
     setSystemPrompt(defaults.systemPrompt);
     setSystemTask(defaults.task);
+    setHowToRespond(defaults.howToRespond);
+    setResponseJsonFormat(defaults.responseJsonFormat);
+  }
+
+  function resetAudioTurnPrompts() {
+    const defaults = createAudioTurnDefaultPrompts(languageName);
+    setSystemPrompt(defaults.systemPrompt);
+    setSystemTask(defaults.taskPrompt);
     setHowToRespond(defaults.howToRespond);
     setResponseJsonFormat(defaults.responseJsonFormat);
   }
@@ -1349,6 +1370,13 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
                 <section className="not-implemented">REQUIRED INPUT AUDIO: NOT SELECTED</section>
               )}
             </>
+          )}
+          {methodId === "AUDIO_TO_AI_TEXT_AND_AUDIO" && (
+            <section className="prompt-source">
+              <h2>RAW PRIMITIVE - NOT AUDIO_ANALYSER</h2>
+              <p>This page only tests audio to provider text plus provider audio. It does not parse keyword flags or correction flags.</p>
+              <button className="secondary-button" type="button" onClick={resetAudioTurnPrompts}>Reset raw primitive prompts</button>
+            </section>
           )}
           {methodId === "AUDIO_ANALYSER" && (
             <>

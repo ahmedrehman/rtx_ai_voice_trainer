@@ -1,6 +1,6 @@
 import type { Env } from "./bindings";
 import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "../mod_ai_calls";
-import { AUDIO_ANALYSER, createAudioAnalyserDefaultPrompts } from "../lib_server_ai_voice";
+import { AUDIO_ANALYSER, createAudioAnalyserDefaultPrompts, createAudioTurnDefaultPrompts } from "../lib_server_ai_voice";
 import { clearCostLedger, getCostLedger, listProviders, runCorrection } from "./app";
 import { json, methodNotAllowed, notFound } from "./responses";
 
@@ -131,15 +131,15 @@ async function audioTurn(request: Request, env: Env) {
 
   const settings = body.settings || {};
   const promptConfig = body.promptConfig || {};
+  const defaultPrompts = createAudioTurnDefaultPrompts(settings.languageName || "French");
   const prompt = [
-    body.systemPrompt,
-    promptConfig.systemTask || `You are a silent-first ${settings.languageName || "French"} voice trainer.`,
+    body.systemPrompt || defaultPrompts.systemPrompt,
+    promptConfig.systemTask || defaultPrompts.taskPrompt,
     `Topic: ${settings.topic || "daily conversation"}.`,
-    `Keyword: ${settings.keyword || "computer"}.`,
     "Listen to the user's audio.",
-    promptConfig.responseJsonFormat ? `RESPONSE JSON FORMAT: ${promptConfig.responseJsonFormat}` : "Return a short text message that is valid JSON with fields: text_original, text_corrected, message, hint, signal.",
+    `RESPONSE JSON FORMAT: ${promptConfig.responseJsonFormat || defaultPrompts.responseJsonFormat}`,
     body.additionalInstructions,
-    promptConfig.howToRespond || "Also produce a short spoken correction in audio. Keep it minimal."
+    promptConfig.howToRespond || defaultPrompts.howToRespond
   ].filter(Boolean).join("\n");
   return json(await RAW_AUDIO_TO_AI_TEXT_AND_AUDIO(
     { openAiApiKey: env.OPENAI_API_KEY },

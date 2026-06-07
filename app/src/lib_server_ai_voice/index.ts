@@ -1,5 +1,6 @@
 import { DUMBB_TEXT_TO_SPEACH, DUMB_SPEACH_TO_TEXT_transcription, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "../mod_ai_calls";
 export { AUDIO_ANALYSER_DEFAULT_PROMPTS, createAudioAnalyserDefaultPrompts } from "./audioAnalyserPrompts";
+export { AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS, createAudioTurnDefaultPrompts } from "./audioTurnPrompts";
 
 export type ServerAiProvider = "openai";
 export type ServerAiImplementation = "openai-audio" | "openai-transcribe" | "openai-tts";

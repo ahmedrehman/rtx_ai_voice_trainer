@@ -75,6 +75,10 @@
 
 - role: original audio -> AI text + AI audio
 - implementation: `openai-audio`
+- default prompts:
+  - source: `audioTurnPrompts.ts`
+  - exported: `AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS`
+  - raw provider-call test only
 - input:
   - provider
   - audioBase64
@@ -96,6 +100,9 @@
   - debug promptSent/inputWithoutAudio
 - hears original audio
 - can judge pronunciation/accent
+- does not parse app business flags
+- does not enforce keyword/correction contract
+- use `AUDIO_ANALYSER` for the real app method
 
 ## `AUDIO_ANALYSER`
 
