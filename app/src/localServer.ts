@@ -140,6 +140,11 @@ async function handleApi(request: IncomingMessage, response: ServerResponse) {
       return;
     }
 
+    if (url.pathname === "/api/voice-agent/text-chat-stream" && request.method === "POST") {
+      await sendWebResponse(response, await voiceAgentTextChatStream(request));
+      return;
+    }
+
     sendJson(response, { error: "Not found" }, 404);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unexpected server error";
@@ -170,6 +175,29 @@ async function voiceAgentTextChat(request: IncomingMessage) {
   } catch (error) {
     return { error: error instanceof Error ? error.message : "VOICE_AGENT_TEXT_CHAT failed" };
   }
+}
+
+async function voiceAgentTextChatStream(request: IncomingMessage) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return new Response(JSON.stringify({ error: "VOICE_AGENT_STREAM_TEXT_CHAT is not connected." }), {
+      status: 503,
+      headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" }
+    });
+  }
+
+  const body = JSON.parse((await readBuffer(request)).toString("utf8")) as VoiceAgentTextChatRequest;
+  const settings = VOICE_AGENT_BACKEND.CREATE_SERVER_SETTINGS(body);
+  return VOICE_AGENT_BACKEND.STREAM_TEXT_CHAT(
+    {
+      provider: "openai",
+      implementation: "openai-audio",
+      openAiApiKey: apiKey,
+      textModel: "gpt-4.1-mini",
+      voice: settings.voice
+    },
+    body
+  );
 }
 
 async function transcribeAudio(request: IncomingMessage) {
@@ -318,6 +346,22 @@ function sendJson(response: ServerResponse, value: unknown, status = 200) {
   response.setHeader("Content-Type", "application/json; charset=utf-8");
   response.setHeader("Cache-Control", "no-store");
   response.end(JSON.stringify(value));
+}
+
+async function sendWebResponse(response: ServerResponse, webResponse: Response) {
+  response.statusCode = webResponse.status;
+  webResponse.headers.forEach((value, key) => response.setHeader(key, value));
+  if (!webResponse.body) {
+    response.end();
+    return;
+  }
+  const reader = webResponse.body.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    response.write(Buffer.from(value));
+  }
+  response.end();
 }
 
 async function readJson(request: IncomingMessage) {

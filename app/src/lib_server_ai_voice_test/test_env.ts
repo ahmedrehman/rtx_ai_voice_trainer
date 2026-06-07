@@ -1,16 +1,30 @@
 import { readFileSync } from "node:fs";
-import type { VoiceAgentStreamTextChatEvent } from "../voice_agent";
+import { join } from "node:path";
+import type { ServerAiConfig, ServerAiLogEvent } from "../lib_server_ai_voice";
 
 export const apiKey = loadLocalEnvAndGetOpenAiKey();
 
-export function serverConfig() {
+export function createServerAiLogger() {
+  const events: ServerAiLogEvent[] = [];
   return {
-    provider: "openai" as const,
-    implementation: "openai-audio" as const,
+    events,
+    logger(event: ServerAiLogEvent) {
+      events.push(event);
+    }
+  };
+}
+
+export function serverAiConfig(patch: Partial<ServerAiConfig> = {}): ServerAiConfig {
+  return {
+    provider: "openai",
+    implementation: patch.implementation || "openai-audio",
     openAiApiKey: apiKey,
     textModel: "gpt-4.1-mini",
+    audioModel: "gpt-audio",
+    transcriptionModel: "gpt-4o-mini-transcribe",
     ttsModel: "gpt-4o-mini-tts",
-    voice: "coral"
+    voice: "coral",
+    ...patch
   };
 }
 
@@ -20,14 +34,20 @@ export function hasApiKey(t: { skip: (message?: string) => void }) {
   return false;
 }
 
-export async function readVoiceAgentStreamEvents(response: Response) {
-  const text = await response.text();
-  return text
-    .split("\n\n")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .map((part) => part.startsWith("data:") ? part.slice(5).trim() : part)
-    .map((jsonText) => JSON.parse(jsonText) as VoiceAgentStreamTextChatEvent);
+export function sampleAudioBase64() {
+  return readFileSync(sampleAudioPath()).toString("base64");
+}
+
+export function sampleAudioFormData() {
+  const bytes = readFileSync(sampleAudioPath());
+  const formData = new FormData();
+  formData.set("file", new Blob([bytes], { type: "audio/wav" }), "sample-voice-test.wav");
+  formData.set("model", "gpt-4o-mini-transcribe");
+  return formData;
+}
+
+function sampleAudioPath() {
+  return join(process.cwd(), "public", "test-audio", "sample-voice-test.wav");
 }
 
 function loadLocalEnvAndGetOpenAiKey() {

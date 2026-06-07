@@ -37,6 +37,12 @@ export type AiAudioTextResult = {
   text: string;
 };
 
+export type AiStreamTextRequest = {
+  model?: string;
+  systemPrompt: string;
+  userPrompt: string;
+};
+
 export async function PURE_TEXT_TO_TEXT_CORRECTION(config: AiCallConfig, request: AiCorrectionRequest) {
   const apiKey = requireOpenAiKey(config);
   const requestBody = {
@@ -255,6 +261,94 @@ export async function RAW_AUDIO_TO_AI_TEXT_ONLY(config: AiCallConfig, request: A
   }
 
   throw new Error(lastError || "Audio AI text failed");
+}
+
+export async function STREAM_TEXT_CHAT_FAST(config: AiCallConfig, request: AiStreamTextRequest): Promise<ReadableStream<Uint8Array>> {
+  const apiKey = requireOpenAiKey(config);
+  if (!request.userPrompt.trim()) throw new Error("STREAM_TEXT_CHAT_FAST requires userPrompt.");
+
+  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: request.model || "gpt-4.1-mini",
+      stream: true,
+      messages: [
+        { role: "system", content: request.systemPrompt },
+        { role: "user", content: request.userPrompt }
+      ]
+    })
+  });
+
+  if (!response.ok || !response.body) {
+    throw new Error(await responseError(response, "OpenAI stream text chat failed"));
+  }
+
+  return openAiSseToTextStream(response.body);
+}
+
+function openAiSseToTextStream(body: ReadableStream<Uint8Array>) {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const reader = body.getReader();
+  let pending = "";
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      while (true) {
+        const nextLine = readPendingLine();
+        if (nextLine !== null) {
+          const text = parseOpenAiStreamLine(nextLine);
+          if (text === "[DONE]") {
+            controller.close();
+            return;
+          }
+          if (text) {
+            controller.enqueue(encoder.encode(text));
+            return;
+          }
+          continue;
+        }
+
+        const { done, value } = await reader.read();
+        if (done) {
+          const text = parseOpenAiStreamLine(pending);
+          pending = "";
+          if (text && text !== "[DONE]") controller.enqueue(encoder.encode(text));
+          controller.close();
+          return;
+        }
+        pending += decoder.decode(value, { stream: true });
+      }
+    },
+    cancel() {
+      return reader.cancel();
+    }
+  });
+
+  function readPendingLine() {
+    const newlineIndex = pending.indexOf("\n");
+    if (newlineIndex < 0) return null;
+    const line = pending.slice(0, newlineIndex).trim();
+    pending = pending.slice(newlineIndex + 1);
+    return line;
+  }
+}
+
+function parseOpenAiStreamLine(line: string) {
+  if (!line.startsWith("data:")) return "";
+  const data = line.slice(5).trim();
+  if (!data) return "";
+  if (data === "[DONE]") return "[DONE]";
+  try {
+    const parsed = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
+    return parsed.choices?.[0]?.delta?.content || "";
+  } catch {
+    return "";
+  }
 }
 
 function normalizeInputAudioFormat(format?: string) {

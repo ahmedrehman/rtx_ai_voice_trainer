@@ -52,6 +52,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       return json(await voiceAgentTextChat(request, env));
     }
 
+    if (pathname === "/api/voice-agent/text-chat-stream") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return voiceAgentTextChatStream(request, env);
+    }
+
     if (pathname.startsWith("/api/")) {
       return notFound();
     }
@@ -172,6 +177,25 @@ async function voiceAgentTextChat(request: Request, env: Env) {
       openAiApiKey: env.OPENAI_API_KEY,
       textModel: "gpt-4.1-mini",
       ttsModel: "gpt-4o-mini-tts",
+      voice: settings.voice
+    },
+    body
+  );
+}
+
+async function voiceAgentTextChatStream(request: Request, env: Env) {
+  if (!env.OPENAI_API_KEY) {
+    return json({ error: "VOICE_AGENT_STREAM_TEXT_CHAT is not connected." }, 503);
+  }
+
+  const body = await request.json() as VoiceAgentTextChatRequest;
+  const settings = VOICE_AGENT_BACKEND.CREATE_SERVER_SETTINGS(body);
+  return VOICE_AGENT_BACKEND.STREAM_TEXT_CHAT(
+    {
+      provider: "openai",
+      implementation: "openai-audio",
+      openAiApiKey: env.OPENAI_API_KEY,
+      textModel: "gpt-4.1-mini",
       voice: settings.voice
     },
     body

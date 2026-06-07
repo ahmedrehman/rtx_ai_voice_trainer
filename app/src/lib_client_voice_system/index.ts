@@ -140,7 +140,7 @@ export type SystemAudioToTextOutput = {
 export async function SYSTEM_MICRO_TO_AUDIO(config: ClientVoiceConfig, input: SystemMicroToAudioInput): Promise<SystemMicroToAudioOutput> {
   const startedAt = new Date().toISOString();
   log(config, "info", "SYSTEM_MICRO_TO_AUDIO", "start", input);
-  if (!navigator.mediaDevices?.getUserMedia) {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
     const error = new Error("client microphone API not available");
     log(config, "error", "SYSTEM_MICRO_TO_AUDIO", error.message);
     return { status: errorStatus("SYSTEM_MICRO_TO_AUDIO", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0 };
@@ -209,7 +209,7 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
   const startedAt = new Date().toISOString();
   log(config, "info", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", "start", input);
   const unavailableEnergyCheck = emptyEnergyCheck(input.energyThreshold ?? 0.035, input.minEnergyActiveMs ?? 250);
-  if (!navigator.mediaDevices?.getUserMedia) {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
     const error = new Error("client microphone API not available");
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
     return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", energyCheck: unavailableEnergyCheck };
@@ -350,7 +350,8 @@ export function SYSTEM_AUDIO_ENERGY_CHECK(config: ClientVoiceConfig, input: Syst
   const threshold = input.threshold ?? 0.035;
   const minActiveMs = input.minActiveMs ?? 250;
   const sampleEveryMs = input.sampleEveryMs ?? 50;
-  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  const browserWindow = getBrowserWindow();
+  const AudioContextCtor = browserWindow?.AudioContext || browserWindow?.webkitAudioContext;
   let context: AudioContext | null = null;
   let timer: number | undefined;
   let available = Boolean(AudioContextCtor);
@@ -370,7 +371,7 @@ export function SYSTEM_AUDIO_ENERGY_CHECK(config: ClientVoiceConfig, input: Syst
       analyser.fftSize = 1024;
       source.connect(analyser);
       const samples = new Uint8Array(analyser.fftSize);
-      timer = window.setInterval(() => {
+      timer = browserWindow.setInterval(() => {
         analyser.getByteTimeDomainData(samples);
         let sum = 0;
         for (let index = 0; index < samples.length; index += 1) {
@@ -391,7 +392,7 @@ export function SYSTEM_AUDIO_ENERGY_CHECK(config: ClientVoiceConfig, input: Syst
   }
 
   function stop() {
-    if (timer) window.clearInterval(timer);
+    if (timer) browserWindow?.clearInterval(timer);
     void context?.close().catch(() => undefined);
     log(config, "info", method, "done", summary());
   }
@@ -417,6 +418,11 @@ export function SYSTEM_AUDIO_ENERGY_CHECK(config: ClientVoiceConfig, input: Syst
 export async function SYSTEM_AUDIO_TO_SPEAKER(config: ClientVoiceConfig, input: SystemAudioToSpeakerInput): Promise<SystemAudioToSpeakerOutput> {
   const startedAt = new Date().toISOString();
   log(config, "info", "SYSTEM_AUDIO_TO_SPEAKER", "start", { size: input.audio.size, type: input.audio.type });
+  if (typeof Audio === "undefined" || typeof URL.createObjectURL !== "function") {
+    const error = new Error("client speaker playback API not available");
+    log(config, "error", "SYSTEM_AUDIO_TO_SPEAKER", error.message);
+    return { status: errorStatus("SYSTEM_AUDIO_TO_SPEAKER", startedAt, error), played: false };
+  }
   const url = URL.createObjectURL(input.audio);
   const audio = new Audio(url);
 
@@ -443,7 +449,8 @@ export async function SYSTEM_AUDIO_TO_SPEAKER(config: ClientVoiceConfig, input: 
 export async function SYSTEM_TEXT_TO_AUDIO(config: ClientVoiceConfig, input: SystemTextToAudioInput): Promise<SystemTextToAudioOutput> {
   const startedAt = new Date().toISOString();
   log(config, "info", "SYSTEM_TEXT_TO_AUDIO", "start", { note: "browser dummy only" });
-  if (!("speechSynthesis" in window) || typeof SpeechSynthesisUtterance === "undefined") {
+  const browserWindow = getBrowserWindow();
+  if (!browserWindow || !("speechSynthesis" in browserWindow) || typeof SpeechSynthesisUtterance === "undefined") {
     const error = new Error("client browser text-to-speech not available");
     log(config, "error", "SYSTEM_TEXT_TO_AUDIO", error.message);
     return { status: errorStatus("SYSTEM_TEXT_TO_AUDIO", startedAt, error), spoken: false, note: "browser_dummy_text_to_speech_only" };
@@ -458,7 +465,7 @@ export async function SYSTEM_TEXT_TO_AUDIO(config: ClientVoiceConfig, input: Sys
       log(config, "error", "SYSTEM_TEXT_TO_AUDIO", `${error.message}: ${event.error}`);
       resolve({ status: errorStatus("SYSTEM_TEXT_TO_AUDIO", startedAt, error), spoken: false, note: "browser_dummy_text_to_speech_only" });
     };
-    window.speechSynthesis.speak(utterance);
+    browserWindow.speechSynthesis.speak(utterance);
   });
 }
 
@@ -466,7 +473,8 @@ export async function SYSTEM_AUDIO_TO_TEXT(config: ClientVoiceConfig, input: Sys
   const startedAt = new Date().toISOString();
   const timeoutMs = input.timeoutMs ?? 6000;
   log(config, "info", "SYSTEM_AUDIO_TO_TEXT", "start", { note: "browser speech recognition only", timeoutMs });
-  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const browserWindow = getBrowserWindow();
+  const Recognition = browserWindow?.SpeechRecognition || browserWindow?.webkitSpeechRecognition;
   if (!Recognition) {
     const error = new Error("client browser speech recognition not available");
     log(config, "error", "SYSTEM_AUDIO_TO_TEXT", error.message);
@@ -482,7 +490,7 @@ export async function SYSTEM_AUDIO_TO_TEXT(config: ClientVoiceConfig, input: Sys
     function finish(output: SystemAudioToTextOutput) {
       if (finished) return;
       finished = true;
-      if (timeout) window.clearTimeout(timeout);
+      if (timeout) browserWindow?.clearTimeout(timeout);
       try {
         recognition.abort();
       } catch {
@@ -513,7 +521,7 @@ export async function SYSTEM_AUDIO_TO_TEXT(config: ClientVoiceConfig, input: Sys
       log(config, "info", "SYSTEM_AUDIO_TO_TEXT", "ended without text");
       finish({ status: doneStatus("SYSTEM_AUDIO_TO_TEXT", startedAt), text: "", note: "browser_speech_recognition_only" });
     };
-    timeout = window.setTimeout(() => {
+    timeout = browserWindow?.setTimeout(() => {
       log(config, "info", "SYSTEM_AUDIO_TO_TEXT", `timed out without text after ${timeoutMs}ms`);
       finish({ status: doneStatus("SYSTEM_AUDIO_TO_TEXT", startedAt), text: "", note: "browser_speech_recognition_only" });
     }, timeoutMs);
@@ -524,6 +532,10 @@ export async function SYSTEM_AUDIO_TO_TEXT(config: ClientVoiceConfig, input: Sys
       finish({ status: errorStatus("SYSTEM_AUDIO_TO_TEXT", startedAt, error), text: "", note: "browser_speech_recognition_only" });
     }
   });
+}
+
+function getBrowserWindow() {
+  return typeof window === "undefined" ? null : window;
 }
 
 function log(config: ClientVoiceConfig, level: "info" | "error", method: string, message: string, data?: unknown) {

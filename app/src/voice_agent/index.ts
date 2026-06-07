@@ -11,7 +11,7 @@ import {
   type ServerAiConfig
 } from "../lib_server_ai_voice";
 import { createAudioAnalyserDefaultPrompts } from "../lib_server_ai_voice/audioAnalyserPrompts";
-import { DUMBB_TEXT_TO_SPEACH, PURE_TEXT_TO_TEXT_CORRECTION } from "../mod_ai_calls";
+import { DUMBB_TEXT_TO_SPEACH, PURE_TEXT_TO_TEXT_CORRECTION, STREAM_TEXT_CHAT_FAST } from "../mod_ai_calls";
 
 export const VOICE_AGENT_SAMPLE_AUDIO_URL = "/test-audio/sample-voice-test.wav";
 
@@ -85,6 +85,10 @@ export type VoiceAgentTextChatInput = {
   speakEnabled?: boolean;
 };
 
+export type VoiceAgentStreamTextChatInput = Omit<VoiceAgentTextChatInput, "speakEnabled"> & {
+  onEvent?: (event: VoiceAgentStreamTextChatEvent) => void;
+};
+
 export type VoiceAgentTextChatRequest = {
   textUserChat?: string;
   history5LastTextChats?: unknown[];
@@ -99,6 +103,63 @@ export type VoiceAgentTextChatRequest = {
     howToRespond?: string;
     responseJsonFormat?: string;
   };
+};
+
+export type VoiceAgentStreamTextChatEvent =
+  | {
+      type: "start";
+      status: {
+        method: "VOICE_AGENT_STREAM_TEXT_CHAT";
+        ok: true;
+        phase: "streaming";
+        startedAt: string;
+      };
+      debug: {
+        input: VoiceAgentTextChatRequest;
+        promptSent: VoiceAgentStreamPrompt;
+      };
+    }
+  | { type: "delta"; text: string }
+  | {
+      type: "done";
+      status: {
+        method: "VOICE_AGENT_STREAM_TEXT_CHAT";
+        ok: true;
+        phase: "done";
+        startedAt: string;
+        finishedAt: string;
+      };
+      text: string;
+    }
+  | {
+      type: "error";
+      status: {
+        method: "VOICE_AGENT_STREAM_TEXT_CHAT";
+        ok: false;
+        phase: "error";
+        startedAt: string;
+        finishedAt: string;
+        error: string;
+      };
+    };
+
+export type VoiceAgentStreamPrompt = {
+  systemPrompt: string;
+  userPrompt: string;
+};
+
+export type VoiceAgentStreamTextChatOutput = {
+  status: {
+    method: "VOICE_AGENT_STREAM_TEXT_CHAT";
+    ok: boolean;
+    phase: "done" | "error";
+    startedAt: string;
+    finishedAt: string;
+    error?: string;
+  };
+  text: string;
+  request: VoiceAgentTextChatRequest;
+  events: VoiceAgentStreamTextChatEvent[];
 };
 
 export type VoiceAgentTextChatOutput = {
@@ -399,6 +460,93 @@ export async function VOICE_AGENT_SEND_TEXT_CHAT(input: VoiceAgentTextChatInput)
   }
 }
 
+export async function VOICE_AGENT_STREAM_TEXT_CHAT(input: VoiceAgentStreamTextChatInput): Promise<VoiceAgentStreamTextChatOutput> {
+  const startedAt = new Date().toISOString();
+  const endpoint = input.endpoint || "/api/voice-agent/text-chat-stream";
+  const prompts = VOICE_AGENT_CREATE_PROMPTS(input.settings);
+  const request: VoiceAgentTextChatRequest = {
+    textUserChat: input.textUserChat,
+    history5LastTextChats: input.history5LastTextChats,
+    provider: input.settings.provider,
+    voice: input.settings.voice,
+    speakEnabled: false,
+    settings: {
+      languageName: input.settings.languageName,
+      topicId: input.settings.topicId,
+      topic: input.settings.topic,
+      keywordOn: input.settings.keywordOn,
+      keywordOff: input.settings.keywordOff,
+      voice: input.settings.voice
+    },
+    systemPrompt: prompts.systemPrompt,
+    additionalInstructions: input.additionalInstructions || "",
+    promptConfig: {
+      systemTask: prompts.task,
+      howToRespond: prompts.howToRespond,
+      responseJsonFormat: prompts.responseJsonFormat
+    }
+  };
+  const events: VoiceAgentStreamTextChatEvent[] = [];
+  let text = "";
+
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request)
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(await response.text().catch(() => `VOICE_AGENT_STREAM_TEXT_CHAT failed with ${response.status}`));
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      const parsed = consumeVoiceAgentSseEvents(pending);
+      pending = parsed.remaining;
+      for (const event of parsed.events) {
+        events.push(event);
+        input.onEvent?.(event);
+        if (event.type === "delta") text += event.text;
+        if (event.type === "done") text = event.text;
+        if (event.type === "error") throw new Error(event.status.error);
+      }
+    }
+
+    for (const event of consumeVoiceAgentSseEvents(pending).events) {
+      events.push(event);
+      input.onEvent?.(event);
+      if (event.type === "delta") text += event.text;
+      if (event.type === "done") text = event.text;
+      if (event.type === "error") throw new Error(event.status.error);
+    }
+
+    return {
+      status: doneStreamStatus(startedAt),
+      text,
+      request,
+      events
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const errorEvent: VoiceAgentStreamTextChatEvent = { type: "error", status: errorStreamStatus(startedAt, message) };
+    if (!events.some((event) => event.type === "error")) {
+      events.push(errorEvent);
+      input.onEvent?.(errorEvent);
+    }
+    return {
+      status: errorStreamStatus(startedAt, message),
+      text,
+      request,
+      events
+    };
+  }
+}
+
 export async function VOICE_AGENT_SERVER_ANALYSE_AUDIO(config: ServerAiConfig, input: {
   settings: VoiceAgentSettings;
   audioBase64: string;
@@ -423,6 +571,75 @@ export async function VOICE_AGENT_SERVER_ANALYSE_AUDIO(config: ServerAiConfig, i
     },
     history5LastTextChats: input.history5LastTextChats || [],
     voice: input.settings.voice
+  });
+}
+
+export async function VOICE_AGENT_SERVER_STREAM_TEXT_CHAT(config: ServerAiConfig, body: VoiceAgentTextChatRequest): Promise<Response> {
+  const startedAt = new Date().toISOString();
+  const settings = VOICE_AGENT_CREATE_SERVER_SETTINGS(body);
+  const promptSent = createStreamTextChatPrompt(settings, body);
+  const requestForDebug: VoiceAgentTextChatRequest = {
+    ...body,
+    speakEnabled: false,
+    settings: {
+      languageName: settings.languageName,
+      topicId: settings.topicId,
+      topic: settings.topic,
+      keywordOn: settings.keywordOn,
+      keywordOff: settings.keywordOff,
+      voice: settings.voice
+    }
+  };
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      let finalText = "";
+      const send = (event: VoiceAgentStreamTextChatEvent) => controller.enqueue(encoder.encode(formatVoiceAgentSseEvent(event)));
+      try {
+        if (!body.textUserChat?.trim()) throw new Error("VOICE_AGENT_STREAM_TEXT_CHAT requires textUserChat.");
+        if (!config.openAiApiKey) throw new Error("OPENAI_API_KEY is not configured.");
+        send({
+          type: "start",
+          status: { method: "VOICE_AGENT_STREAM_TEXT_CHAT", ok: true, phase: "streaming", startedAt },
+          debug: { input: requestForDebug, promptSent }
+        });
+        const textStream = await STREAM_TEXT_CHAT_FAST(
+          { openAiApiKey: config.openAiApiKey },
+          {
+            model: config.textModel,
+            systemPrompt: promptSent.systemPrompt,
+            userPrompt: promptSent.userPrompt
+          }
+        );
+        const reader = textStream.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const delta = decoder.decode(value, { stream: true });
+          if (!delta) continue;
+          finalText += delta;
+          send({ type: "delta", text: delta });
+        }
+        send({ type: "done", status: doneStreamStatus(startedAt), text: finalText });
+      } catch (error) {
+        send({
+          type: "error",
+          status: errorStreamStatus(startedAt, error instanceof Error ? error.message : String(error))
+        });
+      } finally {
+        controller.close();
+      }
+    }
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-store"
+    }
   });
 }
 
@@ -566,6 +783,7 @@ export const VOICE_AGENT_FRONTEND = {
   RECORD_CHUNK: VOICE_AGENT_RECORD_CHUNK,
   ANALYSE_AUDIO: VOICE_AGENT_ANALYSE_AUDIO,
   SEND_TEXT_CHAT: VOICE_AGENT_SEND_TEXT_CHAT,
+  STREAM_TEXT_CHAT: VOICE_AGENT_STREAM_TEXT_CHAT,
   PLAY_AUDIO: VOICE_AGENT_PLAY_AUDIO,
   CREATE_PROMPTS: VOICE_AGENT_CREATE_PROMPTS,
   CREATE_SETTINGS: VOICE_AGENT_CREATE_SETTINGS
@@ -574,6 +792,7 @@ export const VOICE_AGENT_FRONTEND = {
 export const VOICE_AGENT_BACKEND = {
   ANALYSE_AUDIO: VOICE_AGENT_SERVER_ANALYSE_AUDIO,
   TEXT_CHAT: VOICE_AGENT_SERVER_TEXT_CHAT,
+  STREAM_TEXT_CHAT: VOICE_AGENT_SERVER_STREAM_TEXT_CHAT,
   CREATE_PROMPTS: VOICE_AGENT_CREATE_PROMPTS,
   CREATE_SETTINGS: VOICE_AGENT_CREATE_SETTINGS,
   CREATE_SERVER_SETTINGS: VOICE_AGENT_CREATE_SERVER_SETTINGS,
@@ -717,6 +936,66 @@ function doneTextStatus(startedAt: string): VoiceAgentTextChatOutput["status"] {
 
 function errorTextStatus(startedAt: string, error: string): VoiceAgentTextChatOutput["status"] {
   return { method: "VOICE_AGENT_TEXT_CHAT", ok: false, phase: "error", startedAt, finishedAt: new Date().toISOString(), error };
+}
+
+function doneStreamStatus(startedAt: string) {
+  return { method: "VOICE_AGENT_STREAM_TEXT_CHAT" as const, ok: true as const, phase: "done" as const, startedAt, finishedAt: new Date().toISOString() };
+}
+
+function errorStreamStatus(startedAt: string, error: string) {
+  return { method: "VOICE_AGENT_STREAM_TEXT_CHAT" as const, ok: false as const, phase: "error" as const, startedAt, finishedAt: new Date().toISOString(), error };
+}
+
+function createStreamTextChatPrompt(settings: VoiceAgentSettings, body: VoiceAgentTextChatRequest): VoiceAgentStreamPrompt {
+  const prompts = VOICE_AGENT_CREATE_PROMPTS(settings);
+  return {
+    systemPrompt: [
+      "You are VOICE_AGENT_STREAM_TEXT_CHAT, the fast typed-chat streaming method for the voice trainer app.",
+      "You receive typed user text, topic settings, and recent text-chat history.",
+      "There is no microphone audio in this method.",
+      "Answer only the latest textUserChat.",
+      "Use history only as background context.",
+      "Return plain user-facing answer text only.",
+      "Do not return JSON, markdown, field names, flags, debug text, or audio instructions.",
+      "Keep the answer short and natural."
+    ].join("\n"),
+    userPrompt: [
+      `Target language: ${settings.languageName}.`,
+      `Topic/context: ${settings.topic}.`,
+      `Keyword ON exact word/phrase: ${settings.keywordOn}.`,
+      `Keyword OFF exact word/phrase: ${settings.keywordOff}.`,
+      body.additionalInstructions || "",
+      prompts.howToRespond,
+      "",
+      "LATEST USER MESSAGE:",
+      body.textUserChat || "",
+      "",
+      "HISTORY 5 LAST TEXT CHATS - context only:",
+      JSON.stringify(VOICE_AGENT_NORMALIZE_HISTORY(body.history5LastTextChats))
+    ].filter(Boolean).join("\n")
+  };
+}
+
+function formatVoiceAgentSseEvent(event: VoiceAgentStreamTextChatEvent) {
+  return `data: ${JSON.stringify(event)}\n\n`;
+}
+
+function consumeVoiceAgentSseEvents(text: string) {
+  const parts = text.split("\n\n");
+  const remaining = parts.pop() || "";
+  const events = parts
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => part.startsWith("data:") ? part.slice(5).trim() : part)
+    .map((jsonText) => {
+      try {
+        return JSON.parse(jsonText) as VoiceAgentStreamTextChatEvent;
+      } catch {
+        return null;
+      }
+    })
+    .filter((event): event is VoiceAgentStreamTextChatEvent => Boolean(event));
+  return { events, remaining };
 }
 
 function contentTypeToAudioFormat(contentType: string) {

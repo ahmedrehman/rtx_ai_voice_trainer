@@ -27,6 +27,7 @@ import {
   VOICE_AGENT_RECORD_CHUNK,
   VOICE_AGENT_SAMPLE_AUDIO_URL,
   VOICE_AGENT_SEND_TEXT_CHAT,
+  VOICE_AGENT_STREAM_TEXT_CHAT,
   VOICE_AGENT_TOPIC_PRESETS,
   type VoiceAgentChatMessage,
   type VoiceAgentPromptConfig,
@@ -192,6 +193,7 @@ function PageView({
       <p>{page.role}</p>
       {page.id === "APP_FULL_TEST" && <AppVoiceExperience debug settings={voiceAgentSettings} setSettings={setVoiceAgentSettings} />}
       {page.id === "VOICE_AGENT_TEXT_CHAT_TEST" && <VoiceAgentTextChatTestPage settings={voiceAgentSettings} />}
+      {page.id === "VOICE_AGENT_STREAM_TEXT_CHAT_TEST" && <VoiceAgentStreamTextChatTestPage settings={voiceAgentSettings} />}
       {page.id === "VOICE_AGENT_CONFIG" && <VoiceAgentConfigPage settings={voiceAgentSettings} setSettings={setVoiceAgentSettings} />}
       {page.id === "MICROPHONE_AUDIO_REQUIREMENTS" && <MicrophoneDocs />}
       {page.id === "SYSTEM_MEANINGFUL_AUDIO_CHUNK" && <MeaningfulAudioChunkDebug />}
@@ -208,6 +210,7 @@ function PageView({
         "APP_FULL_TEST",
         "VOICE_AGENT_CONFIG",
         "VOICE_AGENT_TEXT_CHAT_TEST",
+        "VOICE_AGENT_STREAM_TEXT_CHAT_TEST",
         "SYSTEM_MEANINGFUL_AUDIO_CHUNK",
         "SYSTEM_AUDIO_ENERGY_CHECK",
         "SYSTEM_MICRO_TO_AUDIO",
@@ -624,6 +627,94 @@ function VoiceAgentTextChatTestPage({ settings }: { settings: VoiceAgentSettings
         </section>
       </div>
       {stack.length === 0 ? <p>No text-chat test run yet.</p> : stack.map((item) => <StackArticle item={item} key={item.id} />)}
+    </section>
+  );
+}
+
+function VoiceAgentStreamTextChatTestPage({ settings }: { settings: VoiceAgentSettings }) {
+  const [textUserChat, setTextUserChat] = useState("Bonjour, je veux pratiquer le francais.");
+  const [historyText, setHistoryText] = useState("[]");
+  const [streamText, setStreamText] = useState("");
+  const [running, setRunning] = useState(false);
+  const prompts = VOICE_AGENT_CREATE_PROMPTS(settings);
+  const { stack, pushStack, updateStack } = useDebugStack();
+
+  async function runStreamTextChatTest() {
+    const history = safeJsonArray(historyText);
+    const input = {
+      endpoint: "/api/voice-agent/text-chat-stream",
+      methodId: "VOICE_AGENT_STREAM_TEXT_CHAT",
+      settings,
+      textUserChat,
+      history5LastTextChats: history,
+      promptConfig: prompts
+    };
+    setStreamText("");
+    const id = pushStack({
+      type: "VOICE_AGENT_STREAM_TEXT_CHAT",
+      status: "running",
+      input,
+      steps: [
+        { label: "Build request", state: "done", detail: "Text, topic settings, history, and prompt config are visible on this page." },
+        { label: "Call stream endpoint", state: "running", detail: "POST /api/voice-agent/text-chat-stream." },
+        { label: "Read stream events", state: "pending", detail: "Waiting for start, delta, and done/error events." }
+      ]
+    });
+    setRunning(true);
+    try {
+      const result = await VOICE_AGENT_STREAM_TEXT_CHAT({
+        settings,
+        textUserChat,
+        history5LastTextChats: history,
+        onEvent: (event) => {
+          if (event.type === "delta") setStreamText((current) => `${current}${event.text}`);
+        }
+      });
+      updateStack(id, {
+        status: result.status.ok ? "ok" : "error",
+        steps: [
+          { label: "Build request", state: "done", detail: "Text, topic settings, history, and prompt config are visible on this page." },
+          { label: "Call stream endpoint", state: result.events.some((event) => event.type === "start") ? "done" : "error", detail: result.events.some((event) => event.type === "start") ? "Server started streaming." : "No stream start event received." },
+          { label: "Read delta events", state: result.text ? "done" : result.status.ok ? "done" : "error", detail: result.text ? `Received ${result.text.length} characters.` : "No text delta received." },
+          { label: "Business result: streamed answer", state: result.status.ok ? "done" : "error", detail: result.status.ok ? result.text : String(result.status.error || "Stream failed.") }
+        ],
+        output: result,
+        error: result.status.error
+      });
+      setStreamText(result.text);
+    } catch (error) {
+      updateStack(id, {
+        status: "error",
+        steps: [{ label: "Run streaming text-chat test", state: "error", detail: error instanceof Error ? error.message : String(error) }],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <section className="debug-method">
+      <div className="debug-grid">
+        <section className="method-panel">
+          <h2>Inputs</h2>
+          <label className="field"><span>textUserChat</span><textarea value={textUserChat} onChange={(event) => setTextUserChat(event.target.value)} rows={4} /><small>Latest typed user message. This method streams plain text only.</small></label>
+          <label className="field"><span>history5LastTextChats</span><textarea value={historyText} onChange={(event) => setHistoryText(event.target.value)} rows={4} /><small>JSON array of previous text chat messages. Context only.</small></label>
+          <button className="run-button" type="button" onClick={() => void runStreamTextChatTest()} disabled={running || !textUserChat.trim()}>{running ? "Streaming..." : "Run streaming text chat"}</button>
+        </section>
+        <section className="method-panel">
+          <h2>Prompt Inputs</h2>
+          <label className="field"><span>topic</span><input value={settings.topic} readOnly /></label>
+          <label className="field"><span>languageName</span><input value={settings.languageName} readOnly /></label>
+          <label className="field"><span>howToRespond</span><textarea value={prompts.howToRespond} readOnly rows={4} /></label>
+          <small>The exact stream prompt sent by the server is shown in the start event under Real output / response.</small>
+        </section>
+      </div>
+      <section className="method-panel">
+        <h2>Streamed answer</h2>
+        <div className="chat-window compact">{streamText || "No stream text yet."}</div>
+      </section>
+      {stack.length === 0 ? <p>No streaming text-chat test run yet.</p> : stack.map((item) => <StackArticle item={item} key={item.id} />)}
     </section>
   );
 }
