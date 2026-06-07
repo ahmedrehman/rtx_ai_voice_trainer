@@ -1,131 +1,318 @@
-# Debug Tree Business Steps
+# Debug Page Quality Standard
 
 ## Purpose
 
-- Show what the app decided.
-- Show why it decided that.
-- Separate business logic from technical logs.
-- Never hide missing functionality.
-- Never call something useful just because audio bytes exist.
+- Let a human understand exactly what one method did.
+- Show real inputs and real outputs.
+- Show all prompts and instructions that are sent.
+- Show business-relevant steps with colored status.
+- Show errors and technical logs without hiding them.
+- Never fake JSON, fake business objects, or fake readiness.
 
-## Display Order
+## Core Rule
 
-- Business target.
-- Current recording state.
-- Business decision.
-- Business-relevant checks.
-- Next action.
-- Recording end reason.
-- Expandable raw request/response/log details.
+- One debug page tests one public method or one real server endpoint.
+- The page calls the real method or real endpoint.
+- If it cannot call it, the page must say `NOT CALLABLE` and explain the missing endpoint/config.
+- UI does not invent hidden business output.
+- UI may show a colored sequence, but real `input`, `output`, `status`, and `error` must stay inspectable.
 
-## Required Tree Shape
+## Required Page Sections
 
-```text
-BUSINESS TARGET: LISTENING TO VOICE
-  RECORDING
-    STATE: ACTIVE | ENDED | ERROR
-    CHUNK LOOP: 5000ms chunks repeating until user stops
+- `Business target`
+  - What user/business task this method supports.
+  - Example: `LISTENING TO VOICE`, `AI AUDIO ANALYSIS`, `DATA STORE SAVE COST`.
 
-  BUSINESS DECISION: USEFUL CHUNK?
-    RESULT: YES | NO
-    REASON: exact human reason
-    SEND TO AI: YES | NO | SKIPPED
+- `Inputs`
+  - Every method input.
+  - Provider choice if provider exists.
+  - Audio/text/history/config fields if method accepts them.
+  - All prompts/instructions if the call can use prompts.
+  - JSON response format editor if AI must return JSON.
+  - Clear note when a method has `prompts: none`.
 
-  CHECKING SILENCE
-    RESULT: AUDIO ENERGY CHECK | NOT AVAILABLE | ERROR
-    DETAILS: RMS energy threshold result
+- `Run button`
+  - Calls the real method or real endpoint.
+  - Button label says what happens.
+  - Disabled/running state visible.
 
-  CHECKING VOICE ACTIVITY
-    RESULT: NOT IMPLEMENTED - SKIP
-    DETAILS: no real VAD
+- `Business sequence`
+  - Colored step list.
+  - Each step has:
+    - step name
+    - status
+    - short result/reason
+  - This is a visual explanation, not fake method output.
 
-  CHECKING BROWSER SPEECH TO TEXT
-    REQUEST: language/config
-    RESULT: HAS TEXT | NO TEXT | NOT AVAILABLE | ERROR
-    DETAILS: expandable JSON
+- `Real input / request`
+  - Expandable JSON.
+  - Shows the exact request object.
+  - Large audio bytes must be summarized as size/type/base64 length.
 
-  CHUNK SENT TO AI FUNCTION
-    RESULT: SENT | SKIPPED
-    REASON: useful chunk yes/no, AI function available yes/no
-    REQUEST: expandable full request without huge audio bytes
-    RESPONSE: expandable full response
+- `Real output / response`
+  - Expandable JSON.
+  - Shows the exact method/endpoint response.
+  - Includes `status`.
+  - Includes error object if failed.
 
-  RECORDING ENDED
-    REASON: user stopped | max duration | browser final text | error
-```
+- `Technical log items`
+  - Expandable array/list.
+  - Below business sequence.
+  - Start/done/error events.
 
-## Business Rules
+## Required Inputs By Method Type
 
-- `audio_blob_exists`
-  - Means browser recorded audio bytes.
-  - Does not mean speech.
-  - Does not mean useful chunk.
+## Client Audio Methods
 
-- `browser_speech_text_exists`
-  - Means browser SpeechRecognition returned text.
-  - It is a helper only.
-  - It is not real VAD.
-
-- `real_silence_detection`
-  - NOT IMPLEMENTED.
+- `SYSTEM_MICRO_TO_AUDIO`
+  - `durationMs`
+  - `mimeType`
+  - browser requirements
+  - prompts: none
+  - output: audio blob metadata, status
 
 - `SYSTEM_AUDIO_ENERGY_CHECK`
-  - Implemented as a public client library method.
-  - Measures microphone RMS energy.
-  - Helps skip silence before AI calls.
-  - Does not prove human speech.
-  - Can be fooled by loud noise.
+  - `durationMs`
+  - `threshold`
+  - `minActiveMs`
+  - `sampleEveryMs`
+  - prompts: none
+  - output: `hasSound`, `activeMs`, `maxRms`, `averageRms`, status
 
-- `real_voice_activity_detection`
-  - NOT IMPLEMENTED.
+- `SYSTEM_AUDIO_TO_TEXT`
+  - `lang`
+  - `timeoutMs`
+  - browser requirements
+  - prompts: none
+  - output: `{ status, text, note }`
+  - must never listen forever
 
-- `USEFUL_CHUNK`
-  - Depends on selected decision mode.
-  - `browser_speech_text`: YES when audio exists and browser speech text exists.
-  - `audio_energy`: YES when audio exists and energy threshold was crossed long enough.
-  - `auto`: browser speech text if available, else audio energy.
-  - NO when no audio exists.
+- `SYSTEM_TEXT_TO_AUDIO`
+  - `text`
+  - `lang`
+  - prompts: none
+  - output: `{ status, spoken, note }`
+  - note must say browser dummy TTS, not AI voice
 
-- `SEND_TO_AI`
-  - NO when `USEFUL_CHUNK = NO`.
-  - NO when AI function is not implemented on that page.
-  - YES only when useful chunk exists and the page really calls the AI method.
+- `SYSTEM_AUDIO_TO_SPEAKER`
+  - `audio`
+  - prompts: none
+  - output: `{ status, played }`
 
-## Required Highlights
+## Server AI Methods
 
-- `BUSINESS DECISION: USEFUL CHUNK = YES/NO`
-  - Must be visible before raw logs.
-  - Must use strong color.
+- Every server AI debug page must show:
+  - `provider`
+  - `voice` if voice output exists
+  - `systemPrompt`
+  - `additionalInstructions`
+  - `history`
+  - real endpoint path
+  - real request JSON/form data summary
+  - real response JSON/audio metadata
 
-- `SEND TO AI`
-  - Must be visible beside the useful chunk decision.
+- `PRIMITIVE_TEXT_TO_AUDIO`
+  - input:
+    - provider
+    - systemPrompt
+    - additionalInstructions
+    - text
+    - history
+    - voice
+  - output:
+    - audio
+    - content type
+    - status/error
+  - note:
+    - text -> audio
+    - no microphone audio
+    - no pronunciation judgement
 
-- `NOT IMPLEMENTED`
-  - Must be red.
-  - Must say `NOT IMPLEMENTED - SKIP`.
+- `PRIMITIVE_AUDIO_TO_TEXT`
+  - input:
+    - provider
+    - systemPrompt
+    - additionalInstructions
+    - textChat
+    - audio
+    - history
+  - output:
+    - JSON text
+    - hint
+    - status/error
+  - note:
+    - transcription only unless explicitly implemented otherwise
 
-- `NO TEXT`
-  - Must not say `use chunk anyway`.
-  - Must say `NO TEXT - SKIP CHUNK`.
+- `AUDIO_TO_AI_TEXT_AND_AUDIO`
+  - input:
+    - provider
+    - original audio
+    - systemPrompt
+    - additionalInstructions
+    - systemTask
+    - howToRespond
+    - responseJsonFormat
+    - voice
+  - output:
+    - text
+    - audio
+    - model
+    - status/error
+  - note:
+    - AI hears original audio
+    - can judge pronunciation if model supports it
 
-- Technical logs
-  - Must be below business flow.
-  - Must be expandable.
-  - Must not be the main explanation.
+- `AUDIO_ANALYSER`
+  - input:
+    - provider
+    - SYSTEM Prompt
+      - task
+      - howToRespond
+      - responseJsonFormat
+    - textUserChat
+    - original audio
+    - history5LastTextChats
+    - voice
+  - output:
+    - JSON flags
+      - keyword_on_sent
+      - keyword_off_sent
+      - has_corrections
+      - is_chat_answer_or_correction
+    - chat_text_to_user
+    - text_corrected
+    - hint
+    - audio
+    - status/error
+  - note:
+    - this is the real method for audio analysis
+    - does not run primitive transcription first
 
-## Required Output Object
+## Data Store Methods
 
-```json
-{
-  "BUSINESS_DECISION_USEFUL_CHUNK": "YES|NO",
-  "business_decision": "USEFUL_CHUNK|NOT_USEFUL_CHUNK",
-  "business_reason": "human readable exact reason",
-  "send_to_ai": "YES|NO_SKIP_NOT_USEFUL|NO_NOT_IMPLEMENTED_ON_THIS_PAGE",
-  "audio_blob_exists": true,
-  "browser_speech_text_exists": false,
-  "audio_energy_has_sound": false,
-  "real_silence_detection_implemented": false,
-  "real_voice_activity_detection_implemented": false,
-  "chunk_sent_to_ai": false
-}
+- Every data-store debug page must show:
+  - implementation
+  - local-memory or cloudflare-d1
+  - exact input filter/payload
+  - exact stored/listed/reset output
+  - status/error
+
+- If page uses local-memory, it must say:
+  - `DATA STORE IMPLEMENTATION: local-memory`
+  - `Cloudflare D1 is not called from this browser page`
+
+## Colored Business Sequence
+
+Use colored step rows for business-relevant status.
+
+- Green / `done`
+  - step succeeded
+  - useful result found
+  - output exists
+
+- Red / `error`
+  - method failed
+  - required input missing
+  - no useful result
+  - endpoint returned error
+
+- Blue / `running`
+  - method is active
+  - listening/recording/request in progress
+
+- Red / `not_implemented`
+  - feature does not exist
+  - must say `NOT IMPLEMENTED - SKIP`
+
+- Yellow / `pending`
+  - waiting for result
+  - not decided yet
+
+## Business Sequence Examples
+
+```text
+Business sequence
+  Request microphone
+    done
+    Microphone stream opened with audio only.
+
+  Start energy check
+    done
+    RMS energy samples collected.
+
+  Decide sound
+    done
+    Audio energy crossed the configured RMS threshold long enough.
 ```
+
+```text
+Business sequence
+  Build request
+    done
+    Browser prepared request for /api/audio-analyser.
+
+  Call server endpoint
+    error
+    OPENAI_API_KEY is not configured.
+
+  Show real response
+    done
+    Response JSON is expandable below.
+```
+
+## What Must Not Happen
+
+- Do not show fake JSON as if it came from the method.
+- Do not label debug-page interpretation as method output.
+- Do not hide prompts.
+- Do not hide request bodies.
+- Do not hide response bodies.
+- Do not say a function is ready if the run button does not call it.
+- Do not say VAD exists if only energy check exists.
+- Do not say speech exists because an audio blob exists.
+- Do not send useless chunks to AI silently.
+- Do not put core logic only in UI.
+
+## Real Output Rule
+
+- Visible output must be real.
+- If UI adds interpretation, label it as UI interpretation.
+- Preferred display:
+  - colored sequence for human status
+  - expandable `Real input / request`
+  - expandable `Real output / response`
+  - expandable `Raw item JSON`
+
+## Missing Functionality Label
+
+Use exact words:
+
+```text
+NOT IMPLEMENTED - SKIP
+```
+
+or:
+
+```text
+NOT CALLABLE - MISSING ENDPOINT
+```
+
+or:
+
+```text
+NOT CONFIGURED - MISSING API KEY
+```
+
+## Future Task Checklist
+
+- Read the method type.
+- List every input from the method signature and plan.
+- Add editors for every prompt/instruction/JSON format.
+- Add audio/text/history/provider/config fields when accepted.
+- Make the run button call the real method/endpoint.
+- Show colored business sequence.
+- Show real request/input.
+- Show real response/output.
+- Show status and errors.
+- Build.
+- Do not push unrelated dirty files.
