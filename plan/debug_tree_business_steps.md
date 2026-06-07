@@ -38,12 +38,14 @@
   - `lib_client_voice_system` -> `lib_client_voice_system_test`
   - `lib_server_ai_voice` -> `lib_server_ai_voice_test`
   - `lib_data_store` -> `lib_data_store_test`
-  - `voice_agent` -> `voice_agent_test`
+  - `voice_agent frontend/debug UI` -> `voice_agent_frontend_test`
+  - `voice_agent backend/programmatic calls` -> `voice_agent_backend_test`
 - The app debug menu must show these test module names.
 - The debug page `module` label must be the test module name.
-- Frontend/client methods live in their frontend test module.
-- Backend/server methods live in their backend test module.
-- A mixed module must still make each page say whether it tests frontend, backend, or full flow.
+- Frontend/client debug components live in their frontend test module.
+- Backend/server programmatic tests live in their backend test module.
+- A mixed `voice_agent_test` bucket is not allowed when frontend and backend responsibilities can be separated.
+- A backend test module may have no debug pages if its proof is programmatic `.test.ts` files only.
 
 ## Required Test Module Files
 
@@ -61,9 +63,15 @@
 Example:
 
 ```text
-voice_agent_test/
+voice_agent_frontend_test/
   index.ts
   voice_agent_text_chat.debug.ts
+  voice_agent_stream_text_chat.debug.ts
+  voice_agent_full_app.debug.ts
+  pages.tsx
+
+voice_agent_backend_test/
+  index.ts
   create_settings.test.ts
   text_chat_missing_typed_text.test.ts
   text_chat_missing_openai_config.test.ts
@@ -71,6 +79,9 @@ voice_agent_test/
   text_chat_real_grammar_correction.test.ts
   text_chat_real_latest_message.test.ts
   text_chat_real_keyword_off.test.ts
+  stream_text_chat_missing_typed_text.test.ts
+  stream_text_chat_missing_openai_config.test.ts
+  stream_text_chat_real_answer.test.ts
   test_env.ts
 ```
 

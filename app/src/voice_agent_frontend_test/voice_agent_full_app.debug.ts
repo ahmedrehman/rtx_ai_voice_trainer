@@ -3,7 +3,7 @@ import type { DebugPageDefinition } from "../debug_page_types";
 export const VOICE_AGENT_FULL_APP_DEBUG_PAGE: DebugPageDefinition = {
   id: "APP_FULL_TEST",
   title: "Full app test",
-  module: "voice_agent_test",
+  module: "voice_agent_frontend_test",
   role: "same voice-agent app flow with listen toggle, speak toggle, chat, and full business/debug details",
   ready: true,
   inputs: [

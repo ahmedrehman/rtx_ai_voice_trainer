@@ -62,21 +62,28 @@ export async function PURE_TEXT_TO_TEXT_CORRECTION(config: AiCallConfig, request
     ],
     text: { format: { type: "json_object" } }
   };
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify(requestBody)
-  });
+  let response: Response | null = null;
+  let errorText = "";
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody)
+    });
+    if (response.ok) break;
+    errorText = await response.text().catch(() => "");
+    if (!isTransientProviderStatus(response.status) || attempt === 2) break;
+    await waitForRetry(attempt);
+  }
 
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => "");
+  if (!response || !response.ok) {
     throw new Error(JSON.stringify({
-      message: `OpenAI correction failed with ${response.status}`,
+      message: `OpenAI correction failed with ${response?.status || "no response"}`,
       requestBody,
-      responseStatus: response.status,
+      responseStatus: response?.status || 0,
       responseText: errorText
     }));
   }
@@ -385,4 +392,12 @@ function requireOpenAiKey(config: AiCallConfig) {
 async function responseError(response: Response, fallback: string) {
   const detail = await response.text().catch(() => "");
   return `${fallback} with ${response.status}${detail ? `: ${detail}` : ""}`;
+}
+
+function isTransientProviderStatus(status: number) {
+  return status === 408 || status === 409 || status === 429 || status >= 500;
+}
+
+function waitForRetry(attempt: number) {
+  return new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
 }

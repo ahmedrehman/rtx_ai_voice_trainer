@@ -3,7 +3,7 @@ import type { DebugPageDefinition } from "../debug_page_types";
 export const VOICE_AGENT_STREAM_TEXT_CHAT_DEBUG_PAGE: DebugPageDefinition = {
   id: "VOICE_AGENT_STREAM_TEXT_CHAT_TEST",
   title: "Voice agent streaming text chat",
-  module: "voice_agent_test",
+  module: "voice_agent_frontend_test",
   role: "typed text + prompts -> fast streamed answer text, without changing VOICE_AGENT_TEXT_CHAT",
   ready: true,
   inputs: [

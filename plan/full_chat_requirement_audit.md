@@ -20,13 +20,14 @@ Status labels:
     - `lib_client_voice_system_test`
     - `lib_server_ai_voice_test`
     - `lib_data_store_test`
-    - `voice_agent_test`
-  - Still missing: programmatic tests for most methods.
+    - `voice_agent_frontend_test`
+    - `voice_agent_backend_test`
+  - Still missing: programmatic tests for some browser-only happy paths and full app loop cases.
 
 - `PARTIAL` Debug pages for every method.
   - Requested: every method has a debug page showing all inputs, prompts, requests, responses, status, errors, and business steps.
   - Current: many debug-page definition files exist.
-  - Missing: streaming page, separate full app flow test module/page file, and full per-method proof quality.
+  - Missing: final per-method proof quality audit across all pages.
 
 - `PARTIAL` Programmatic tests for every function.
   - Requested: each feature/method has programmatic tests that do what the UI test does, without mocking the target.
