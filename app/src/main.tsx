@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Activity, Archive, BookOpen, Database, FileAudio, Home, Menu, Mic, Server, Volume2, X } from "lucide-react";
 import type { DebugPageDefinition } from "./debug_page_types";
@@ -134,8 +134,11 @@ function MeaningfulAudioChunkDebug() {
   const [mimeType, setMimeType] = useState("");
   const [running, setRunning] = useState(false);
   const [listenerState, setListenerState] = useState<"idle" | "listening" | "ended" | "error">("idle");
+  const stopRequestedRef = useRef(false);
+  const [session, setSession] = useState({ active: false, chunks: 0, endedReason: "not started" });
   const [audioUrl, setAudioUrl] = useState("");
   const [stack, setStack] = useState<StackItem[]>([]);
+  const latestBusiness = stack.find((item) => item.business)?.business as Record<string, unknown> | undefined;
 
   function pushStack(item: Omit<StackItem, "id" | "createdAt">) {
     const next = { id: createId(), createdAt: new Date().toISOString(), ...item };
@@ -147,12 +150,13 @@ function MeaningfulAudioChunkDebug() {
     setStack((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
   }
 
-  async function runAudioChunk() {
+  async function runAudioChunk(runMode: "single" | "loop" = "single") {
     const input = {
       maxDurationMs,
       speechResultIdleMs,
       speechCheckLang,
       mimeType: mimeType || undefined,
+      runMode,
       browserNeeds: {
         secureContext: window.isSecureContext,
         getUserMedia: Boolean(navigator.mediaDevices?.getUserMedia),
@@ -211,6 +215,9 @@ function MeaningfulAudioChunkDebug() {
         method: "SYSTEM_MEANINGFUL_AUDIO_CHUNK",
         business_target: "LISTENING TO VOICE",
         this_function_role: "browser microphone chunk recorder plus optional browser speech helper",
+        recording_active: runMode === "loop" && !stopRequestedRef.current,
+        chunk_duration_target_ms: maxDurationMs,
+        repeating_chunks_until_stop: runMode === "loop",
         did_check_for_speech: speechCheckerAvailable,
         how_speech_was_checked: speechCheckerAvailable ? "browser SpeechRecognition helper" : "not checked; browser helper unavailable",
         did_find_speech: speechFound,
@@ -221,6 +228,8 @@ function MeaningfulAudioChunkDebug() {
         did_skip_chunk: false,
         chunk_accepted_for_next_step: audioRecorded,
         chunk_sent_to_ai: false,
+        ai_function_name: "AUDIO_ANALYSER",
+        ai_send_status: "SKIPPED_NOT_IMPLEMENTED_ON_THIS_PAGE",
         why_stopped: humanChunkReason(result.chunkReason),
         what_this_means: speechFound
           ? "Browser helper heard text. Audio chunk was still recorded."
@@ -281,21 +290,36 @@ function MeaningfulAudioChunkDebug() {
     }
   }
 
+  async function startListeningLoop() {
+    stopRequestedRef.current = false;
+    setSession({ active: true, chunks: 0, endedReason: "" });
+    setListenerState("listening");
+
+    while (!stopRequestedRef.current) {
+      await runAudioChunk("loop");
+      setSession((current) => ({ ...current, chunks: current.chunks + 1 }));
+      await wait(120);
+    }
+
+    setSession((current) => ({ ...current, active: false, endedReason: "USER CLICKED STOP" }));
+    setListenerState("ended");
+  }
+
+  function stopListeningLoop() {
+    stopRequestedRef.current = true;
+    setSession((current) => ({ ...current, endedReason: "USER CLICKED STOP" }));
+  }
+
   return (
     <section className="debug-method">
       <div className="explain">
-        <h2>What this function does</h2>
-        <p className="not-implemented">REAL AUDIO SILENCE DETECTION: NOT IMPLEMENTED</p>
-        <p className="not-implemented">MICROPHONE VOLUME / RMS DETECTION: NOT IMPLEMENTED</p>
-        <p className="not-implemented">VOICE ACTIVITY DETECTION: NOT IMPLEMENTED</p>
-        <ul>
-          <li>Calls browser microphone permission from a direct button click.</li>
-          <li>Requests microphone only: `audio: true`, `video: false`.</li>
-          <li>Records audio with `MediaRecorder`.</li>
-          <li>If browser SpeechRecognition exists, it uses it only as a helper text/speech-result checker.</li>
-          <li>If browser SpeechRecognition is missing, it records until max duration.</li>
-          <li>Returns a standard `status` object and audio chunk metadata.</li>
-        </ul>
+        <BusinessTree
+          latestBusiness={latestBusiness}
+          listenerState={listenerState}
+          session={session}
+          speechCheckLang={speechCheckLang}
+          maxDurationMs={maxDurationMs}
+        />
       </div>
 
       <div className="debug-grid">
@@ -338,7 +362,13 @@ function MeaningfulAudioChunkDebug() {
           }, null, 2)}</pre>
 
           <button className="run-button" type="button" onClick={() => void runAudioChunk()} disabled={running}>
-            {running ? "Recording..." : "Run microphone chunk"}
+            {running ? "Recording..." : "Record one chunk"}
+          </button>
+          <button className="run-button" type="button" onClick={() => void startListeningLoop()} disabled={session.active || running}>
+            Start listening loop
+          </button>
+          <button className="stop-button" type="button" onClick={stopListeningLoop} disabled={!session.active}>
+            Stop listening
           </button>
         </section>
 
@@ -401,6 +431,123 @@ function humanChunkReason(reason: string) {
   if (reason === "max_duration") return "time limit reached; no final browser speech result stopped it";
   if (reason === "no_speech_checker") return "browser speech helper unavailable; time limit reached";
   return reason;
+}
+
+function BusinessTree({
+  latestBusiness,
+  listenerState,
+  session,
+  speechCheckLang,
+  maxDurationMs
+}: {
+  latestBusiness?: Record<string, unknown>;
+  listenerState: "idle" | "listening" | "ended" | "error";
+  session: { active: boolean; chunks: number; endedReason: string };
+  speechCheckLang: string;
+  maxDurationMs: number;
+}) {
+  const hasText = Boolean(latestBusiness?.did_find_speech);
+  const chunkAccepted = Boolean(latestBusiness?.chunk_accepted_for_next_step);
+
+  return (
+    <section className="business-tree">
+      <h2>BUSINESS TARGET: LISTENING TO VOICE</h2>
+      <details open>
+        <summary>
+          <span>RECORDING</span>
+          <strong className={session.active ? "state-running" : "state-ended"}>{session.active ? "ACTIVE" : listenerState.toUpperCase()}</strong>
+        </summary>
+        <div className="tree-children">
+          <p>MEANS RECORDING {maxDurationMs}ms chunks repeating until user clicks Stop.</p>
+          <p>chunks recorded this session: {session.chunks}</p>
+        </div>
+      </details>
+
+      <details open>
+        <summary>
+          <span>CHECKING SILENCE</span>
+          <strong className="state-not-implemented">NOT IMPLEMENTED - SKIP</strong>
+        </summary>
+        <div className="tree-children">
+          <p>No microphone volume/RMS/VAD silence check exists.</p>
+        </div>
+      </details>
+
+      <details open>
+        <summary>
+          <span>CHECKING VOICE ACTIVITY</span>
+          <strong className="state-not-implemented">NOT IMPLEMENTED - SKIP</strong>
+        </summary>
+        <div className="tree-children">
+          <p>No real voice activity detector exists.</p>
+        </div>
+      </details>
+
+      <details open>
+        <summary>
+          <span>CHECKING BROWSER VOICE TO SPEECH</span>
+          <strong className={hasText ? "state-done" : "state-skipped"}>{hasText ? "HAS TEXT - USE CHUNK" : "NO TEXT - USE CHUNK ANYWAY"}</strong>
+        </summary>
+        <div className="tree-children">
+          <details>
+            <summary>REQUEST</summary>
+            <pre>{JSON.stringify({
+              speechCheckLang,
+              note: "This is browser SpeechRecognition helper only. It may misunderstand other languages."
+            }, null, 2)}</pre>
+          </details>
+          <details>
+            <summary>RESULT JSON</summary>
+            <pre>{JSON.stringify({
+              has_text: hasText,
+              text: latestBusiness?.found_text || "",
+              language_warning: latestBusiness?.speech_language_warning || ""
+            }, null, 2)}</pre>
+          </details>
+        </div>
+      </details>
+
+      <details open>
+        <summary>
+          <span>CHUNK SENT TO AI FUNCTION AUDIO_ANALYSER</span>
+          <strong className="state-not-implemented">SKIPPED - NOT IMPLEMENTED HERE</strong>
+        </summary>
+        <div className="tree-children">
+          <details>
+            <summary>REQUEST FULL</summary>
+            <pre>{JSON.stringify({
+              would_send_to: "AUDIO_ANALYSER",
+              chunk_accepted_for_next_step: chunkAccepted,
+              audio_chunk_exists: Boolean(latestBusiness?.did_record_audio_chunk),
+              note: "This page does not call AI yet."
+            }, null, 2)}</pre>
+          </details>
+          <details>
+            <summary>RESPONSE FULL</summary>
+            <pre>{JSON.stringify({
+              ai_called: false,
+              has_correction: false,
+              reason: "AI send is not implemented on this page."
+            }, null, 2)}</pre>
+          </details>
+        </div>
+      </details>
+
+      <details open>
+        <summary>
+          <span>RECORDING ENDED</span>
+          <strong className={listenerState === "listening" ? "state-running" : "state-ended"}>{listenerState === "listening" ? "LISTENING ON" : "ENDED"}</strong>
+        </summary>
+        <div className="tree-children">
+          <p>reason: {session.endedReason || String(latestBusiness?.why_stopped || "not ended yet")}</p>
+        </div>
+      </details>
+    </section>
+  );
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function StaticPage({ page }: { page: Page }) {

@@ -242,11 +242,80 @@ p {
 .explain {
   display: grid;
   gap: 8px;
-  max-width: 880px;
+  max-width: 1100px;
   padding: 14px;
   border: 1px solid #e3e3e3;
   border-radius: 8px;
   background: #fbfbfb;
+}
+
+.business-tree {
+  display: grid;
+  gap: 10px;
+}
+
+.business-tree h2 {
+  color: #1f1f1f;
+  font-size: 1rem;
+  text-transform: uppercase;
+}
+
+.business-tree details {
+  border: 1px solid #d5d5d5;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.business-tree summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.business-tree summary span {
+  font-weight: 900;
+}
+
+.business-tree summary strong {
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+}
+
+.tree-children {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 12px 28px;
+}
+
+.tree-children details {
+  background: #fbfbfb;
+}
+
+.state-running {
+  color: #0f4ca8;
+  background: #dbeafe;
+}
+
+.state-ended,
+.state-done {
+  color: #20633a;
+  background: #e9f8ee;
+}
+
+.state-skipped {
+  color: #744400;
+  background: #fff8e9;
+}
+
+.state-not-implemented {
+  color: #b00020;
+  background: #fff0f2;
 }
 
 .explain h2,
