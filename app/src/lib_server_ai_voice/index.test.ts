@@ -5,6 +5,8 @@ import {
   AUDIO_ANALYSER_DEFAULT_PROMPTS,
   AUDIO_TO_AI_TEXT_AND_AUDIO,
   AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS,
+  PRIMITIVE_AUDIO_TO_TEXT,
+  PRIMITIVE_TEXT_TO_AUDIO,
   type ServerAiConfig
 } from "./index";
 
@@ -17,16 +19,87 @@ const originalFetch = globalThis.fetch;
 let fetchCalls: FetchCall[] = [];
 let nextAiText = "";
 let nextAudioBase64 = "audio-base64-result";
+let nextTranscriptionText = "Bonjour transcription.";
 
 beforeEach(() => {
   fetchCalls = [];
   nextAiText = "";
   nextAudioBase64 = "audio-base64-result";
+  nextTranscriptionText = "Bonjour transcription.";
   globalThis.fetch = mockAudioFetch as typeof fetch;
 });
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+describe("PRIMITIVE_TEXT_TO_AUDIO", () => {
+  it("calls text-to-speech and returns audio status", async () => {
+    const output = await PRIMITIVE_TEXT_TO_AUDIO({ ...testConfig(), implementation: "openai-tts" }, {
+      provider: "openai",
+      systemPrompt: "Speak calmly.",
+      additionalInstructions: "Keep it short.",
+      text: "Bonjour.",
+      history: ["last turn"]
+    });
+
+    assert.equal(output.status.ok, true);
+    assert.equal(output.contentType, "audio/mpeg");
+    assert.equal(output.audio instanceof ReadableStream, true);
+    assert.equal(output.json.analysis?.["usedPromptAsTtsInstructions" as keyof typeof output.json.analysis], true);
+    assert.equal(fetchCalls.length, 1);
+    assert.equal(fetchCalls[0].url, "https://api.openai.com/v1/audio/speech");
+    assert.equal((fetchCalls[0].body as { input?: string }).input, "Bonjour.");
+  });
+
+  it("returns error status when text-to-speech config is missing", async () => {
+    const output = await PRIMITIVE_TEXT_TO_AUDIO({ ...testConfig(), implementation: "openai-tts", openAiApiKey: "" }, {
+      provider: "openai",
+      text: "Bonjour."
+    });
+
+    assert.equal(output.status.ok, false);
+    assert.match(output.status.error || "", /OPENAI_API_KEY/);
+    assert.equal(output.audio, null);
+    assert.deepEqual(output.json.flags, { error: true });
+    assert.equal(fetchCalls.length, 0);
+  });
+});
+
+describe("PRIMITIVE_AUDIO_TO_TEXT", () => {
+  it("calls transcription and returns transcript text", async () => {
+    nextTranscriptionText = "Bonjour, ceci est un test.";
+    const form = new FormData();
+    form.set("file", new Blob(["audio"], { type: "audio/wav" }));
+
+    const output = await PRIMITIVE_AUDIO_TO_TEXT({ ...testConfig(), implementation: "openai-transcribe" }, {
+      provider: "openai",
+      audioBody: form,
+      audioContentType: undefined,
+      systemPrompt: "debug context",
+      additionalInstructions: "debug",
+      textChat: "chat",
+      history: []
+    });
+
+    assert.equal(output.status.ok, true);
+    assert.equal(output.audio, null);
+    assert.equal(output.json.text, nextTranscriptionText);
+    assert.equal(output.json.analysis?.["pronunciationJudgement" as keyof typeof output.json.analysis], false);
+    assert.equal(fetchCalls[0].url, "https://api.openai.com/v1/audio/transcriptions");
+  });
+
+  it("returns error status when implementation is wrong", async () => {
+    const output = await PRIMITIVE_AUDIO_TO_TEXT(testConfig(), {
+      provider: "openai",
+      audioBody: new FormData()
+    });
+
+    assert.equal(output.status.ok, false);
+    assert.match(output.status.error || "", /implementation mismatch/);
+    assert.equal(output.json.text, "");
+    assert.equal(fetchCalls.length, 0);
+  });
 });
 
 describe("AUDIO_TO_AI_TEXT_AND_AUDIO", () => {
@@ -60,6 +133,22 @@ describe("AUDIO_TO_AI_TEXT_AND_AUDIO", () => {
     assert.match(prompt, /not the real app method/i);
     assert.doesNotMatch(prompt, /keyword_on_sent/);
     assert.doesNotMatch(prompt, /has_corrections/);
+  });
+
+  it("returns error status when raw audio is missing", async () => {
+    const output = await AUDIO_TO_AI_TEXT_AND_AUDIO(testConfig(), {
+      provider: "openai",
+      audioBase64: "",
+      audioFormat: "wav",
+      systemPrompt: AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS.systemPrompt,
+      taskPrompt: AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS.taskPrompt,
+      responseJsonFormat: AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS.responseJsonFormat
+    });
+
+    assert.equal(output.status.ok, false);
+    assert.match(output.status.error || "", /Audio AI input is empty/);
+    assert.equal(output.audioBase64, "");
+    assert.equal(fetchCalls.length, 0);
   });
 });
 
@@ -150,8 +239,22 @@ function testConfig(): ServerAiConfig {
 }
 
 async function mockAudioFetch(url: string | URL | Request, init?: RequestInit) {
-  const body = JSON.parse(String(init?.body || "{}"));
+  const body = parseRequestBody(init?.body);
   fetchCalls.push({ url: String(url), body });
+
+  if (String(url).includes("/audio/speech")) {
+    return new Response(new Blob(["audio bytes"], { type: "audio/mpeg" }), {
+      status: 200,
+      headers: { "Content-Type": "audio/mpeg" }
+    });
+  }
+
+  if (String(url).includes("/audio/transcriptions")) {
+    return new Response(JSON.stringify({ text: nextTranscriptionText }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }
 
   return new Response(JSON.stringify({
     choices: [
@@ -169,6 +272,12 @@ async function mockAudioFetch(url: string | URL | Request, init?: RequestInit) {
     status: 200,
     headers: { "Content-Type": "application/json" }
   });
+}
+
+function parseRequestBody(body: BodyInit | null | undefined) {
+  if (typeof body === "string") return JSON.parse(body);
+  if (body instanceof FormData) return body;
+  return body || null;
 }
 
 function extractPrompt(requestBody: unknown) {
