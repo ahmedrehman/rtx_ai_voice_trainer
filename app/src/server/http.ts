@@ -76,12 +76,14 @@ async function speakAudio(request: Request, env: Env) {
   }
 
   const body = await request.json() as {
+    provider?: string;
     text?: string;
     voice?: string;
     languageName?: string;
     style?: string;
     systemPrompt?: string;
     additionalInstructions?: string;
+    history?: unknown[];
   };
   const text = String(body.text || "").trim();
   if (!text) {
@@ -94,7 +96,7 @@ async function speakAudio(request: Request, env: Env) {
       text,
       voice: body.voice,
       languageName: body.languageName,
-      style: [body.systemPrompt, body.additionalInstructions, body.style].filter(Boolean).join("\n") || undefined
+      style: [body.systemPrompt, body.additionalInstructions, body.style, body.history ? `HISTORY: ${JSON.stringify(body.history)}` : ""].filter(Boolean).join("\n") || undefined
     }
   );
 
@@ -115,6 +117,7 @@ async function audioTurn(request: Request, env: Env) {
   const body = await request.json() as {
     audioBase64?: string;
     audioFormat?: string;
+    provider?: string;
     voice?: string;
     systemPrompt?: string;
     additionalInstructions?: string;
@@ -159,6 +162,7 @@ async function realMethod(request: Request, env: Env) {
     audioFormat?: string;
     textUserChat?: string;
     history5LastTextChats?: unknown[];
+    provider?: string;
     settings?: { languageName?: string; topic?: string; keyword?: string };
     systemPrompt?: string;
     additionalInstructions?: string;

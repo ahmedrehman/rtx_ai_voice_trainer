@@ -1034,6 +1034,7 @@ function loggerFor(pushStack: (item: Omit<StackItem, "id" | "createdAt">) => str
 }
 
 function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
+  const [provider, setProvider] = useState("openai");
   const [text, setText] = useState("Bonjour. Ceci est un test.");
   const [voice, setVoice] = useState("coral");
   const [languageName, setLanguageName] = useState("French");
@@ -1065,6 +1066,7 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
     const input = {
       endpoint,
       methodId,
+      provider,
       text,
       voice,
       languageName,
@@ -1109,7 +1111,7 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
         response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text, voice, languageName, style, systemPrompt, additionalInstructions })
+          body: JSON.stringify({ provider, text, voice, languageName, style, systemPrompt, additionalInstructions, history: parseJsonInput(historyText, []) })
         });
       } else if (methodId === "PRIMITIVE_AUDIO_TO_TEXT") {
         const form = new FormData();
@@ -1129,6 +1131,7 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
               audioFormat: audio?.type || "webm",
               textUserChat,
               history5LastTextChats,
+              provider,
               voice,
               systemPrompt,
               additionalInstructions,
@@ -1137,6 +1140,7 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
           : {
               audioBase64,
               audioFormat: audio?.type || "webm",
+              provider,
               voice,
               settings: { languageName },
               systemPrompt,
@@ -1217,9 +1221,17 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
       inputs={(
         <>
           <section className="not-implemented">SERVER METHOD VIA ENDPOINT: {endpoint}</section>
+          <label className="field">
+            <span>provider</span>
+            <select value={provider} onChange={(event) => setProvider(event.target.value)}>
+              <option value="openai">openai</option>
+            </select>
+            <small>Provider choice. Only OpenAI is implemented right now.</small>
+          </label>
           {methodId === "PRIMITIVE_TEXT_TO_AUDIO" && (
             <>
               <label className="field"><span>text</span><textarea value={text} onChange={(event) => setText(event.target.value)} rows={4} /><small>Text sent to server TTS endpoint.</small></label>
+              <label className="field"><span>history</span><textarea value={historyText} onChange={(event) => setHistoryText(event.target.value)} rows={3} /><small>JSON history sent to server TTS endpoint.</small></label>
             </>
           )}
           {(methodId === "PRIMITIVE_TEXT_TO_AUDIO" || methodId === "PRIMITIVE_AUDIO_TO_TEXT") && (

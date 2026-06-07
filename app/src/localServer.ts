@@ -164,12 +164,14 @@ async function speakAudio(request: IncomingMessage, response: ServerResponse) {
   }
 
   const body = JSON.parse((await readBuffer(request)).toString("utf8")) as {
+    provider?: string;
     text?: string;
     voice?: string;
     languageName?: string;
     style?: string;
     systemPrompt?: string;
     additionalInstructions?: string;
+    history?: unknown[];
   };
   const text = String(body.text || "").trim();
   if (!text) {
@@ -185,7 +187,7 @@ async function speakAudio(request: IncomingMessage, response: ServerResponse) {
         text,
         voice: body.voice,
         languageName: body.languageName,
-        style: [body.systemPrompt, body.additionalInstructions, body.style].filter(Boolean).join("\n") || undefined
+        style: [body.systemPrompt, body.additionalInstructions, body.style, body.history ? `HISTORY: ${JSON.stringify(body.history)}` : ""].filter(Boolean).join("\n") || undefined
       }
     );
   } catch (error) {
@@ -209,6 +211,7 @@ async function audioTurn(request: IncomingMessage) {
   const body = JSON.parse((await readBuffer(request)).toString("utf8")) as {
     audioBase64?: string;
     audioFormat?: string;
+    provider?: string;
     voice?: string;
     systemPrompt?: string;
     additionalInstructions?: string;
@@ -258,6 +261,7 @@ async function realMethod(request: IncomingMessage) {
     audioFormat?: string;
     textUserChat?: string;
     history5LastTextChats?: unknown[];
+    provider?: string;
     systemPrompt?: string;
     additionalInstructions?: string;
     settings?: { languageName?: string; topic?: string; keyword?: string };
