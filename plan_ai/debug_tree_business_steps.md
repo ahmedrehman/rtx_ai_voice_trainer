@@ -289,6 +289,12 @@ Business sequence
 
 - Visible output must be real.
 - If UI adds interpretation, label it as UI interpretation.
+- Shared debug components must reset by method id.
+- Do not reuse state from another method page.
+- Real input/request must be method-specific.
+- Do not show fields that this method does not send.
+- Audio input preview must be labeled selected input audio.
+- Do not label input audio as output audio.
 - Preferred display:
   - colored sequence for human status
   - expandable `Real input / request`
@@ -319,8 +325,10 @@ NOT CONFIGURED - MISSING API KEY
 
 - Read the method type.
 - List every input from the method signature and plan.
+- Key/reset every shared debug component by method id.
 - Add editors for every prompt/instruction/JSON format.
 - Add audio/text/history/provider/config fields when accepted.
+- Remove fields that the method does not accept.
 - Make the run button call the real method/endpoint.
 - Show colored business sequence.
 - Use `error` only for real failures, not for valid `NO`.

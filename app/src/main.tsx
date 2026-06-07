@@ -147,8 +147,8 @@ function PageView({ page }: { page: Page }) {
       {page.id === "SYSTEM_AUDIO_TO_TEXT" && <AudioToTextDebug />}
       {page.id === "SYSTEM_TEXT_TO_AUDIO" && <TextToAudioDebug />}
       {page.id === "SYSTEM_AUDIO_TO_SPEAKER" && <AudioToSpeakerDebug />}
-      {["PRIMITIVE_TEXT_TO_AUDIO", "PRIMITIVE_AUDIO_TO_TEXT", "AUDIO_TO_AI_TEXT_AND_AUDIO", "AUDIO_ANALYSER"].includes(page.id) && <ServerAiEndpointDebug methodId={page.id} />}
-      {page.module === "Data Store" && <DataStoreMethodDebug methodId={page.id} />}
+      {["PRIMITIVE_TEXT_TO_AUDIO", "PRIMITIVE_AUDIO_TO_TEXT", "AUDIO_TO_AI_TEXT_AND_AUDIO", "AUDIO_ANALYSER"].includes(page.id) && <ServerAiEndpointDebug key={page.id} methodId={page.id} />}
+      {page.module === "Data Store" && <DataStoreMethodDebug key={page.id} methodId={page.id} />}
       {![
         "MICROPHONE_AUDIO_REQUIREMENTS",
         "SYSTEM_MEANINGFUL_AUDIO_CHUNK",
@@ -1063,29 +1063,66 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
   }
 
   async function runServerMethod() {
-    const input = {
-      endpoint,
-      methodId,
-      provider,
-      text,
-      voice,
-      languageName,
-      style,
-      systemPrompt,
-      additionalInstructions,
-      audio: audio ? { size: audio.size, type: audio.type, name: audio.name } : null,
-      textChat,
-      textUserChat,
-      historyText,
-      promptConfig: { systemPrompt, additionalInstructions, systemTask, howToRespond, responseJsonFormat }
-    };
+    const audioInput = audio ? { size: audio.size, type: audio.type, name: audio.name } : null;
+    const parsedHistory = parseJsonInput(historyText, []);
+    const promptConfig = { systemTask, howToRespond, responseJsonFormat };
+    const input =
+      methodId === "PRIMITIVE_TEXT_TO_AUDIO"
+        ? {
+            endpoint,
+            methodId,
+            provider,
+            systemPrompt,
+            additionalInstructions,
+            text,
+            voice,
+            languageName,
+            style,
+            history: parsedHistory
+          }
+        : methodId === "PRIMITIVE_AUDIO_TO_TEXT"
+          ? {
+              endpoint,
+              methodId,
+              provider,
+              systemPrompt,
+              additionalInstructions,
+              textChat,
+              audio: audioInput,
+              history: parsedHistory
+            }
+          : methodId === "AUDIO_TO_AI_TEXT_AND_AUDIO"
+            ? {
+                endpoint,
+                methodId,
+                provider,
+                systemPrompt,
+                additionalInstructions,
+                audio: audioInput,
+                voice,
+                languageName,
+                promptConfig
+              }
+            : {
+                endpoint,
+                methodId,
+                provider,
+                systemPrompt,
+                additionalInstructions,
+                textUserChat,
+                audio: audioInput,
+                voice,
+                history5LastTextChats: parsedHistory,
+                promptConfig
+              };
     const id = pushStack({
       type: methodId,
       status: "running",
       input,
       steps: [
         { label: "Build request", state: "done", detail: `Browser prepares request for ${endpoint}.` },
-        { label: "Call server endpoint", state: "running", detail: "Request is in progress." },
+        { label: "Check required audio", state: needsAudio ? "pending" : "done", detail: needsAudio ? "Audio file must be selected before endpoint call." : "No audio input required." },
+        { label: "Call server endpoint", state: "pending", detail: "Endpoint not called yet." },
         { label: "Business decision", state: "pending", detail: "No server result yet." }
       ]
     });
@@ -1093,12 +1130,20 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
     if (needsAudio && !audio) {
       updateStack(id, {
         status: "error",
-        business: {
-          BUSINESS_DECISION: "SERVER_CALL=NO",
-          decision_ok: false,
-          business_reason: "Audio input is required for this server method.",
-          send_to_ai: "NO_MISSING_AUDIO"
+        output: {
+          status: {
+            ok: false,
+            phase: "error",
+            error: "Audio input is required.",
+            endpointCalled: false
+          }
         },
+        steps: [
+          { label: "Build request", state: "done", detail: `Browser prepared request for ${endpoint}.` },
+          { label: "Check required audio", state: "error", detail: "Audio file is required but none is selected." },
+          { label: "Call server endpoint", state: "done", detail: "Not called because required audio is missing." },
+          { label: "Result", state: "error", detail: "Missing required input: audio." }
+        ],
         error: "Audio input is required."
       });
       return;
@@ -1111,7 +1156,7 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
         response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ provider, text, voice, languageName, style, systemPrompt, additionalInstructions, history: parseJsonInput(historyText, []) })
+          body: JSON.stringify({ provider, text, voice, languageName, style, systemPrompt, additionalInstructions, history: parsedHistory })
         });
       } else if (methodId === "PRIMITIVE_AUDIO_TO_TEXT") {
         const form = new FormData();
@@ -1124,7 +1169,7 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
         response = await fetch(endpoint, { method: "POST", body: form });
       } else {
         const audioBase64 = await blobToBase64(audio as File);
-        const history5LastTextChats = parseJsonInput(historyText, []);
+        const history5LastTextChats = parsedHistory;
         const body = methodId === "AUDIO_ANALYSER"
           ? {
               audioBase64,
@@ -1192,8 +1237,9 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
         output,
         steps: [
           { label: "Build request", state: "done", detail: `Request prepared for ${endpoint}.` },
+          { label: "Check required audio", state: needsAudio ? "done" : "done", detail: needsAudio ? "Audio file selected." : "No audio input required." },
           { label: "Call server endpoint", state: ok ? "done" : "error", detail: ok ? "Endpoint returned without error." : String(business.business_reason) },
-          { label: "Business decision", state: ok ? "done" : "error", detail: String(business.business_reason) }
+          { label: `Result: server call ${ok ? "OK" : "ERROR"}`, state: ok ? "done" : "error", detail: String(business.business_reason) }
         ],
         error: errorText || undefined
       });
@@ -1217,7 +1263,7 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
   return (
     <SimpleDebugPage
       stack={stack}
-      outputAudioUrl={outputAudioUrl || audioUrl}
+      outputAudioUrl={outputAudioUrl || undefined}
       inputs={(
         <>
           <section className="not-implemented">SERVER METHOD VIA ENDPOINT: {endpoint}</section>
@@ -1244,11 +1290,21 @@ function ServerAiEndpointDebug({ methodId }: { methodId: string }) {
             <label className="field"><span>style</span><textarea value={style} onChange={(event) => setStyle(event.target.value)} rows={3} /><small>TTS style/instructions sent to server.</small></label>
           )}
           {needsAudio && (
-            <label className="field">
-              <span>audio file</span>
-              <input type="file" accept="audio/*" onChange={(event) => selectAudio(event.target.files?.[0] || null)} />
-              <small>Original audio sent to the server endpoint.</small>
-            </label>
+            <>
+              <label className="field">
+                <span>audio file</span>
+                <input type="file" accept="audio/*" onChange={(event) => selectAudio(event.target.files?.[0] || null)} />
+                <small>Required input audio sent to the server endpoint.</small>
+              </label>
+              {audioUrl ? (
+                <section className="input-audio-preview">
+                  <h2>Selected input audio</h2>
+                  <audio controls src={audioUrl} />
+                </section>
+              ) : (
+                <section className="not-implemented">REQUIRED INPUT AUDIO: NOT SELECTED</section>
+              )}
+            </>
           )}
           {methodId === "AUDIO_ANALYSER" && (
             <>
