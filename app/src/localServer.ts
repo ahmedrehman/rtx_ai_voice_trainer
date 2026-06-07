@@ -65,8 +65,17 @@ function lanAddresses() {
 }
 
 function loadLocalEnv() {
-  try {
-    const text = readFileSync(".env.local", "utf8");
+  for (const fileName of [".env", ".env.local", "app/.env", "app/.env.local"]) {
+    try {
+      const text = readFileSync(fileName, "utf8");
+      loadEnvText(text);
+    } catch {
+      // Local env files are optional.
+    }
+  }
+}
+
+function loadEnvText(text: string) {
     for (const rawLine of text.split(/\r?\n/)) {
       const line = rawLine.trim();
       if (!line || line.startsWith("#")) continue;
@@ -79,9 +88,6 @@ function loadLocalEnv() {
       }
       if (!process.env[name]) process.env[name] = value;
     }
-  } catch {
-    // Local env is optional.
-  }
 }
 
 async function handleApi(request: IncomingMessage, response: ServerResponse) {
