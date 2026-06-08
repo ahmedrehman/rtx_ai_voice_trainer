@@ -33,7 +33,9 @@
 - Do not hide tests inside the production module folder.
 - Test module folder name must be:
   - production module name
-  - plus `_test`
+  - plus `_test`  plus _sever  or _client or _web 
+  - there may be 3 parts 
+  - every test may consist of 3 module parts _server _web (ui for the test)  _client (client app code )
 - Examples:
   - `lib_client_voice_system` -> `lib_client_voice_system_test`
   - `lib_server_ai_voice` -> `lib_server_ai_voice_test`
@@ -42,20 +44,30 @@
   - `voice_agent backend/programmatic calls` -> `voice_agent_backend_test`
 - The app debug menu must show these test module names.
 - The debug page `module` label must be the test module name.
-- Frontend/client debug components live in their frontend test module.
-- Backend/server programmatic tests live in their backend test module.
+- Frontend/client debug components live in their frontend test module. _client_test  and _ui_test
+- Backend/server programmatic tests live in their backend test module. _test_server
 - A mixed `voice_agent_test` bucket is not allowed when frontend and backend responsibilities can be separated.
 - A backend test module may have no debug pages if its proof is programmatic `.test.ts` files only.
 
-## Required Test Module Files
-
+## Required Test Module Files  to enforce proper implementation 
+- 1 visual test page 
+  - includes busines level steps bullet listed with short notes
+  - includes module.method name execution path bullet list with short notes
+  - clear statement what is mocked what is real,  also in unit tests barely anything gets mocked except it realy makes no sence  this is no mock test.
+  - clear statemnt of duplicate codepaths , duplicate code paths should not exist, all web, api , direct calls should go same method and all logic is in the client or server core application.
+  - editor for changing test inputs
+  - exec  and text output display
+  - several prepaired test input and outputs with explanation to select, typical full usecases that make sence
+- unit tests   computer executable version of same prepaired tests calleable over methods  and all executed on testing  
+- each unit test is also listed and short explained busines idea , whats mocked, input exprected output   short readable
 - One debug page = one file.
+- one unit test = one file
 - Debug page file name:
-  - `<method_or_page_id>.debug.ts`
-- One programmatic unit/business test case = one file.
+  - `<method_>.debug.ts`
+- One programmatic unit/business test case = one file. 
 - Test file name:
-  - `<method_or_case>.test.ts`
-- Shared helpers are allowed only in clearly named helper files.
+  - `<method_or_case>.unit_test.ts`  
+- Shared helpers utilities that are not standard utilities, just for test  should have clearly named helper files. 
 - Index file only aggregates exports.
 - Index file must not contain page definitions.
 - Index file must not contain test cases.
@@ -91,8 +103,7 @@ voice_agent_backend_test/
 - Do not put all debug pages into one giant `index.ts`.
 - Do not put all unit tests into one giant `index.test.ts`.
 - Do not label a debug menu group with the production module name when it is a test module.
-- Do not make a debug page that has no matching visible file.
-- Do not make a test case that has no matching visible `.test.ts` file when programmatic testing is possible.
+
 
 ## Required Method Contract
 
@@ -116,7 +127,11 @@ If any contract part is unknown, show:
 
 ```text
 UNKNOWN - NOT VERIFIED
+  
+
 ```
+show DOES NOT APPLY    NOT IMPLEMTED  MISSING  etc, dont skip relevant information   
+
 
 ## Business Oversight Rule
 
@@ -265,6 +280,7 @@ prompts: none
 - `Business target`
   - What user/business task this method supports.
   - Example: `LISTENING TO VOICE`, `AI AUDIO ANALYSIS`, `DATA STORE SAVE COST`.
+-  module method  call stack (important steps and stack not small utilities)
 
 - `Method contract`
   - Method/endpoint name.

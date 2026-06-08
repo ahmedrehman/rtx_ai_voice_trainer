@@ -24,8 +24,24 @@ voice_to_text
 - the module exposes public ponjects methods to use, internal code is not accessible. a clear defined border  best enforced by public and private files wher public has no logic just types and interface objects exposed.
 
 - IMPORTANT NO HACKS, no fast fixes, NO WOrkarounds, No duplicate Execution Paths,  and thing that does not immediately clearly fit tothe current structure and ideals   ASK USER  do never implement dirty quick fixes  Everything has a library
-
+- IMPORTANT   YOU MARLK CLEAR NOT IMPLEMENTED   you never pretend something is there or ready  You dont cheat me 
 - TEST AND VISUALISE proove the module structure is enforced and implemented   There should be a test UI page for each Modules with its methods one by one to visualise document and check each method. because so far this structure has allways been broken by AI and the result projekt got unmaintainable because it used to bekome a heap of double.  The User should be able to quickly understand see the method click it understand allit s input
+
+as test i expect
+such a structure  busines AIMS  RESULT    REASON    detail expandable
+BUSINES TARGET:      LISTENING TO VOICE
+       MEANS RECORDING      AVCTIVE    5000ms chunks REPEATING ENDLESS
+                 CHECKING SILENCE    NOT IMPLEMENTED SKIP
+                  CHECKING VOICE   NOT IMPLEMENTD SKIP
+                 CHECKING NBROWSER VOICE TO SPEACH       TARGET SKIP OR USE CHUNK
+                              REQUEST      FR       (WILL IT REMARK ENGISH?)
+                                      RESULT    HAS TEXT  
+                                              result json  klick to open
+                             CHUNK SENT    to AI  FUCTION ....   
+                                   request  full   klick to expand
+                                   response full  click to expand
+                                                HAS CORRECXTION
+       RECORDING   ENDED     REASON   USER CLICKED STOP
 
 -  All methods return additional status in their wrapped returns
 -  All errors are tracked handled and logged additionally, the list of error events can be displayed any time, it is an array

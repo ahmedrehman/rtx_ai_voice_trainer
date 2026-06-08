@@ -1228,6 +1228,7 @@ export function VOICE_AGENT_DECIDE_LISTEN_SEND(input: VoiceAgentListenSendDecisi
 }
 
 export function VOICE_AGENT_SHOULD_SURFACE_CHAT(settings: VoiceAgentSettings, json: AudioAnalyserOutput["json"]) {
+  if (json.flags.keyword_detected !== "none" || json.flags.keyword_on_sent || json.flags.keyword_off_sent) return false;
   return Boolean(settings.allowFreeChat || json.flags.has_corrections);
 }
 
@@ -1416,10 +1417,10 @@ function detectExactTextKeyword(textUserChat: string, settings: VoiceAgentSettin
   const text = normalizeKeywordText(textUserChat);
   const keywordOff = normalizeKeywordText(settings.keywordOff);
   const keywordOn = normalizeKeywordText(settings.keywordOn);
-  if (keywordOff && text.includes(keywordOff)) {
+  if (keywordOff && text === keywordOff) {
     return { keyword_detected: "off" as const, keyword_exact_text: settings.keywordOff };
   }
-  if (keywordOn && text.includes(keywordOn)) {
+  if (keywordOn && text === keywordOn) {
     return { keyword_detected: "on" as const, keyword_exact_text: settings.keywordOn };
   }
   return { keyword_detected: "none" as const, keyword_exact_text: "" };

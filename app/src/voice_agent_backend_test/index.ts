@@ -11,6 +11,7 @@ export const VOICE_AGENT_BACKEND_TEST_MODULE = {
     "text_chat_missing_typed_text.test.ts",
     "text_chat_missing_openai_config.test.ts",
     "text_chat_real_answer.test.ts",
+    "text_chat_real_free_chat_10_step.test.ts",
     "text_chat_real_grammar_correction.test.ts",
     "text_chat_real_latest_message.test.ts",
     "text_chat_real_keyword_off.test.ts",
