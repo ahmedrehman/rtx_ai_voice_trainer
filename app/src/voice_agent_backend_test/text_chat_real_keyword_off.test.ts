@@ -20,4 +20,9 @@ test("VOICE_AGENT_TEXT_CHAT real OpenAI call detects exact off keyword in text",
   assert.equal(result.status.ok, true, result.status.error);
   assert.equal(result.json.flags.keyword_off_sent, true);
   assert.equal(result.json.flags.keyword_detected, "off");
+  assert.equal(result.json.flags.has_corrections, false);
+  assert.equal(result.json.chat_text_to_user, "");
+  assert.equal(result.json.text_corrected, "");
+  assert.equal(result.json.hint, "");
+  assert.equal(result.audio, null);
 });

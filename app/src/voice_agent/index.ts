@@ -14,6 +14,7 @@ import { createAudioAnalyserDefaultPrompts } from "../lib_server_ai_voice/audioA
 import { DUMBB_TEXT_TO_SPEACH, PURE_TEXT_TO_TEXT_CORRECTION, STREAM_AUDIO_TO_AI_TEXT_AND_AUDIO, STREAM_TEXT_CHAT_FAST } from "../mod_ai_calls";
 
 export const VOICE_AGENT_SAMPLE_AUDIO_URL = "/test-audio/sample-voice-test.wav";
+export const VOICE_AGENT_REQUEST_TIMEOUT_MS = 45000;
 
 export type VoiceAgentSettings = {
   provider: "openai";
@@ -58,6 +59,7 @@ export type VoiceAgentAnalyseInput = {
   history5LastTextChats: string[];
   additionalInstructions?: string;
   speakEnabled?: boolean;
+  requestTimeoutMs?: number;
 };
 
 export type VoiceAgentAnalyseResult = {
@@ -85,6 +87,7 @@ export type VoiceAgentTextChatInput = {
   history5LastTextChats: string[];
   additionalInstructions?: string;
   speakEnabled?: boolean;
+  requestTimeoutMs?: number;
 };
 
 export type VoiceAgentStreamTextChatInput = Omit<VoiceAgentTextChatInput, "speakEnabled"> & {
@@ -93,6 +96,23 @@ export type VoiceAgentStreamTextChatInput = Omit<VoiceAgentTextChatInput, "speak
 
 export type VoiceAgentStreamVoiceTurnInput = Omit<VoiceAgentAnalyseInput, "speakEnabled"> & {
   onEvent?: (event: VoiceAgentStreamVoiceTurnEvent) => void;
+};
+
+export type VoiceAgentKeywordFlags = {
+  keyword_on_sent?: boolean;
+  keyword_off_sent?: boolean;
+  keyword_detected?: "on" | "off" | "none";
+};
+
+export type VoiceAgentKeywordControlState = {
+  speakEnabled: boolean;
+};
+
+export type VoiceAgentKeywordControlDecision = {
+  speakEnabled: boolean;
+  changed: boolean;
+  action: "speak_on" | "speak_off" | "none";
+  reason: string;
 };
 
 export type VoiceAgentTextChatRequest = {
@@ -400,11 +420,40 @@ export async function VOICE_AGENT_RECORD_CHUNK(config: ClientVoiceConfig, input:
   };
 }
 
+export function VOICE_AGENT_APPLY_KEYWORD_CONTROL_STATE(
+  state: VoiceAgentKeywordControlState,
+  flags: VoiceAgentKeywordFlags
+): VoiceAgentKeywordControlDecision {
+  if (flags.keyword_detected === "off" || flags.keyword_off_sent) {
+    return {
+      speakEnabled: false,
+      changed: state.speakEnabled,
+      action: "speak_off",
+      reason: "AI detected the off control phrase. App must stop speaking."
+    };
+  }
+  if (flags.keyword_detected === "on" || flags.keyword_on_sent) {
+    return {
+      speakEnabled: true,
+      changed: !state.speakEnabled,
+      action: "speak_on",
+      reason: "AI detected the on control phrase. App may speak future correction audio."
+    };
+  }
+  return {
+    speakEnabled: state.speakEnabled,
+    changed: false,
+    action: "none",
+    reason: "No control keyword flag was returned."
+  };
+}
+
 export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): Promise<VoiceAgentAnalyseResult> {
   const startedAt = new Date().toISOString();
   const endpoint = input.endpoint || "/api/audio-analyser";
   const prompts = VOICE_AGENT_CREATE_PROMPTS(input.settings);
   let request: ({ audioBase64: string } & Record<string, unknown>) | null = null;
+  const timeout = startVoiceAgentRequestTimeout(endpoint, input.requestTimeoutMs);
 
   try {
     const aiAudio = await normalizeAudioBlobForOpenAi(input.audio);
@@ -443,6 +492,7 @@ export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): 
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: timeout.signal,
       body: JSON.stringify(request)
     });
     const data = await response.json().catch(() => ({ error: "Response was not JSON." })) as AudioAnalyserOutput | { error: string };
@@ -467,7 +517,8 @@ export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): 
       audio: isAudioAnalyserOutput(data) && data.audio ? { audioBase64: data.audio.audioBase64, audioFormat: data.audio.audioFormat } : null
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const normalized = normalizeVoiceAgentRequestError(error, timeout);
+    const errorMessage = normalized instanceof Error ? normalized.message : String(normalized);
     return {
       status: {
         method: "VOICE_AGENT_ANALYSE_AUDIO",
@@ -487,6 +538,8 @@ export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): 
       chatMessage: { id: createId(), role: "assistant", text: errorMessage, createdAt: new Date().toISOString() },
       audio: null
     };
+  } finally {
+    timeout.clear();
   }
 }
 
@@ -498,6 +551,7 @@ export async function VOICE_AGENT_SEND_TEXT_CHAT(input: VoiceAgentTextChatInput)
   const startedAt = new Date().toISOString();
   const endpoint = input.endpoint || "/api/voice-agent/text-chat";
   const prompts = VOICE_AGENT_CREATE_PROMPTS(input.settings);
+  const timeout = startVoiceAgentRequestTimeout(endpoint, input.requestTimeoutMs);
   const request: VoiceAgentTextChatRequest = {
     textUserChat: input.textUserChat,
     history5LastTextChats: input.history5LastTextChats,
@@ -526,6 +580,7 @@ export async function VOICE_AGENT_SEND_TEXT_CHAT(input: VoiceAgentTextChatInput)
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: timeout.signal,
       body: JSON.stringify(request)
     });
     const data = await response.json().catch(() => ({ error: "Response was not JSON." })) as VoiceAgentTextChatOutput | { error: string };
@@ -549,7 +604,8 @@ export async function VOICE_AGENT_SEND_TEXT_CHAT(input: VoiceAgentTextChatInput)
       audio: isVoiceAgentTextChatOutput(data) && data.audio ? { audioBase64: data.audio.audioBase64, audioFormat: data.audio.audioFormat } : null
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const normalized = normalizeVoiceAgentRequestError(error, timeout);
+    const message = normalized instanceof Error ? normalized.message : String(normalized);
     return {
       status: {
         method: "VOICE_AGENT_TEXT_CHAT" as const,
@@ -564,12 +620,15 @@ export async function VOICE_AGENT_SEND_TEXT_CHAT(input: VoiceAgentTextChatInput)
       chatMessage: { id: createId(), role: "assistant" as const, text: message, createdAt: new Date().toISOString() },
       audio: null
     };
+  } finally {
+    timeout.clear();
   }
 }
 
 export async function VOICE_AGENT_STREAM_TEXT_CHAT(input: VoiceAgentStreamTextChatInput): Promise<VoiceAgentStreamTextChatOutput> {
   const startedAt = new Date().toISOString();
   const endpoint = input.endpoint || "/api/voice-agent/text-chat-stream";
+  const timeout = startVoiceAgentRequestTimeout(endpoint, input.requestTimeoutMs);
   const request: VoiceAgentTextChatRequest = {
     textUserChat: input.textUserChat,
     history5LastTextChats: input.history5LastTextChats,
@@ -594,6 +653,7 @@ export async function VOICE_AGENT_STREAM_TEXT_CHAT(input: VoiceAgentStreamTextCh
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: timeout.signal,
       body: JSON.stringify(request)
     });
     if (!response.ok || !response.body) {
@@ -633,7 +693,8 @@ export async function VOICE_AGENT_STREAM_TEXT_CHAT(input: VoiceAgentStreamTextCh
       events
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const normalized = normalizeVoiceAgentRequestError(error, timeout);
+    const message = normalized instanceof Error ? normalized.message : String(normalized);
     const errorEvent: VoiceAgentStreamTextChatEvent = { type: "error", status: errorStreamStatus(startedAt, message) };
     if (!events.some((event) => event.type === "error")) {
       events.push(errorEvent);
@@ -645,6 +706,8 @@ export async function VOICE_AGENT_STREAM_TEXT_CHAT(input: VoiceAgentStreamTextCh
       request,
       events
     };
+  } finally {
+    timeout.clear();
   }
 }
 
@@ -652,6 +715,7 @@ export async function VOICE_AGENT_STREAM_VOICE_TURN(input: VoiceAgentStreamVoice
   const startedAt = new Date().toISOString();
   const endpoint = input.endpoint || "/api/voice-agent/voice-turn-stream";
   const prompts = VOICE_AGENT_CREATE_PROMPTS(input.settings);
+  const timeout = startVoiceAgentRequestTimeout(endpoint, input.requestTimeoutMs);
   let request: VoiceAgentStreamVoiceTurnOutput["request"] | null = null;
   const events: VoiceAgentStreamVoiceTurnEvent[] = [];
   let text = "";
@@ -688,6 +752,7 @@ export async function VOICE_AGENT_STREAM_VOICE_TURN(input: VoiceAgentStreamVoice
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: timeout.signal,
       body: JSON.stringify(wireRequest)
     });
     if (!response.ok || !response.body) {
@@ -735,7 +800,8 @@ export async function VOICE_AGENT_STREAM_VOICE_TURN(input: VoiceAgentStreamVoice
       events
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const normalized = normalizeVoiceAgentRequestError(error, timeout);
+    const message = normalized instanceof Error ? normalized.message : String(normalized);
     const errorEvent: VoiceAgentStreamVoiceTurnEvent = { type: "error", status: errorVoiceStreamStatus(startedAt, message) };
     if (!events.some((event) => event.type === "error")) {
       events.push(errorEvent);
@@ -753,6 +819,8 @@ export async function VOICE_AGENT_STREAM_VOICE_TURN(input: VoiceAgentStreamVoice
       },
       events
     };
+  } finally {
+    timeout.clear();
   }
 }
 
@@ -892,8 +960,10 @@ export async function VOICE_AGENT_SERVER_STREAM_VOICE_TURN(config: ServerAiConfi
   const taskPrompt = [
     `Target language: ${settings.languageName}.`,
     `Topic/context: ${settings.topic}.`,
-    `Keyword ON exact word/phrase: ${settings.keywordOn}.`,
-    `Keyword OFF exact word/phrase: ${settings.keywordOff}.`,
+    "CONTROL PHRASES - NOT LESSON CONTENT:",
+    `ON control phrase: ${settings.keywordOn}.`,
+    `OFF control phrase: ${settings.keywordOff}.`,
+    "If a control phrase is heard, treat it as app mode control only. Do not translate it, answer about it, or make it part of the lesson response.",
     `TEXT USER CHAT: ${body.textUserChat || ""}`,
     `HISTORY 5 LAST TEXT CHATS: ${JSON.stringify(VOICE_AGENT_NORMALIZE_HISTORY(body.history5LastTextChats))}`,
     "Answer the current audio turn only.",
@@ -1009,8 +1079,6 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
   const taskPrompt = [
     `Target language: ${settings.languageName}.`,
     `Topic/context: ${settings.topic}.`,
-    `Keyword ON exact word/phrase: ${settings.keywordOn}.`,
-    `Keyword OFF exact word/phrase: ${settings.keywordOff}.`,
     "LATEST USER MESSAGE is the only message to answer.",
     "HISTORY 5 LAST TEXT CHATS is context only and must not become the answer target.",
     settings.allowFreeChat
@@ -1060,7 +1128,7 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
         }
       }
     );
-    const parsed = applyTextKeywordFlags(parseVoiceAgentJson(ai.rawText), body.textUserChat || "", settings);
+    const parsed = controlOnlyKeywordJson(applyTextKeywordFlags(parseVoiceAgentJson(ai.rawText), body.textUserChat || "", settings));
     const shouldSurfaceChat = VOICE_AGENT_SHOULD_SURFACE_CHAT(settings, parsed);
     const chatText = shouldSurfaceChat
       ? correctionOnlyChatText(parsed) || parsed.chat_text_to_user || parsed.hint || fallbackTextChatAnswer(body.textUserChat || "", settings)
@@ -1172,6 +1240,52 @@ function correctionOnlyChatText(json: AudioAnalyserOutput["json"]) {
   return json.text_corrected.trim() || json.chat_text_to_user.trim();
 }
 
+function controlOnlyKeywordJson(json: AudioAnalyserOutput["json"]): AudioAnalyserOutput["json"] {
+  if (json.flags.keyword_detected === "none") return json;
+  return {
+    flags: {
+      ...json.flags,
+      keyword_on_sent: json.flags.keyword_detected === "on",
+      keyword_off_sent: json.flags.keyword_detected === "off",
+      has_corrections: false,
+      correction_type: "none",
+      is_chat_answer_or_correction: "none"
+    },
+    chat_text_to_user: "",
+    text_corrected: "",
+    hint: ""
+  };
+}
+
+function startVoiceAgentRequestTimeout(endpoint: string, requestTimeoutMs = VOICE_AGENT_REQUEST_TIMEOUT_MS) {
+  let timedOut = false;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, requestTimeoutMs);
+  return {
+    signal: controller.signal,
+    clear: () => clearTimeout(timeoutId),
+    isTimedOut: () => timedOut,
+    message: () => `VOICE_AGENT request timed out after ${requestTimeoutMs}ms: ${endpoint}`
+  };
+}
+
+function normalizeVoiceAgentRequestError(error: unknown, timeout: ReturnType<typeof startVoiceAgentRequestTimeout>) {
+  if (timeout.isTimedOut() || isAbortError(error)) return new Error(timeout.message());
+  return error;
+}
+
+function isAbortError(error: unknown) {
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "name" in error &&
+    String((error as { name?: unknown }).name) === "AbortError"
+  );
+}
+
 export const VOICE_AGENT_FRONTEND = {
   RECORD_CHUNK: VOICE_AGENT_RECORD_CHUNK,
   DECIDE_LISTEN_SEND: VOICE_AGENT_DECIDE_LISTEN_SEND,
@@ -1182,6 +1296,7 @@ export const VOICE_AGENT_FRONTEND = {
   PLAY_AUDIO: VOICE_AGENT_PLAY_AUDIO,
   SHOULD_SURFACE_CHAT: VOICE_AGENT_SHOULD_SURFACE_CHAT,
   CORRECTION_TEXT: VOICE_AGENT_CORRECTION_TEXT,
+  APPLY_KEYWORD_CONTROL_STATE: VOICE_AGENT_APPLY_KEYWORD_CONTROL_STATE,
   CREATE_PROMPTS: VOICE_AGENT_CREATE_PROMPTS,
   CREATE_SETTINGS: VOICE_AGENT_CREATE_SETTINGS
 };
@@ -1193,6 +1308,7 @@ export const VOICE_AGENT_BACKEND = {
   STREAM_VOICE_TURN: VOICE_AGENT_SERVER_STREAM_VOICE_TURN,
   SHOULD_SURFACE_CHAT: VOICE_AGENT_SHOULD_SURFACE_CHAT,
   CORRECTION_TEXT: VOICE_AGENT_CORRECTION_TEXT,
+  APPLY_KEYWORD_CONTROL_STATE: VOICE_AGENT_APPLY_KEYWORD_CONTROL_STATE,
   CREATE_PROMPTS: VOICE_AGENT_CREATE_PROMPTS,
   CREATE_SETTINGS: VOICE_AGENT_CREATE_SETTINGS,
   CREATE_SERVER_SETTINGS: VOICE_AGENT_CREATE_SERVER_SETTINGS,
@@ -1382,8 +1498,6 @@ function createStreamTextChatPrompt(settings: VoiceAgentSettings, body: VoiceAge
     userPrompt: [
       `Target language: ${settings.languageName}.`,
       `Topic/context: ${settings.topic}.`,
-      `Keyword ON exact word/phrase: ${settings.keywordOn}.`,
-      `Keyword OFF exact word/phrase: ${settings.keywordOff}.`,
       body.additionalInstructions || "",
       "Answer in plain text only.",
       "Do not use the JSON response format from other voice-agent methods.",

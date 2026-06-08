@@ -21,6 +21,7 @@ import { AUDIO_ANALYSER_DEFAULT_PROMPTS, createAudioAnalyserDefaultPrompts } fro
 import { AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS, createAudioTurnDefaultPrompts } from "./lib_server_ai_voice/audioTurnPrompts";
 import {
   VOICE_AGENT_ANALYSE_AUDIO,
+  VOICE_AGENT_APPLY_KEYWORD_CONTROL_STATE,
   VOICE_AGENT_DEFAULT_SETTINGS,
   VOICE_AGENT_CREATE_PROMPTS,
   VOICE_AGENT_CREATE_SETTINGS,
@@ -28,6 +29,7 @@ import {
   VOICE_AGENT_CORRECTION_TEXT,
   VOICE_AGENT_DECIDE_LISTEN_SEND,
   VOICE_AGENT_RECORD_CHUNK,
+  VOICE_AGENT_REQUEST_TIMEOUT_MS,
   VOICE_AGENT_SAMPLE_AUDIO_URL,
   VOICE_AGENT_SEND_TEXT_CHAT,
   VOICE_AGENT_TOPIC_PRESETS,
@@ -422,6 +424,9 @@ function AppVoiceExperience({
         setMessages((current) => [...current, result.chatMessage as VoiceAgentChatMessage].slice(-30));
       }
       const resultJson = isAudioAnalyserResponse(result.response) ? result.response.json : null;
+      if (result.status.ok && resultJson) {
+        applyAudioKeywordControl(resultJson.flags);
+      }
       if (result.status.ok && resultJson?.flags.has_corrections) {
         setLastCorrectionText(VOICE_AGENT_CORRECTION_TEXT(resultJson));
         lastAssistantTextRef.current = VOICE_AGENT_CORRECTION_TEXT(resultJson);
@@ -544,6 +549,20 @@ function AppVoiceExperience({
     void startListenLoop();
   }
 
+  function applyAudioKeywordControl(flags: VoiceAgentResultFlags) {
+    const decision = VOICE_AGENT_APPLY_KEYWORD_CONTROL_STATE({ speakEnabled: speakEnabledRef.current }, flags);
+    if (decision.action === "speak_off") {
+      speakEnabledRef.current = false;
+      setSpeakEnabled(false);
+      stopSpeakingNow();
+      return;
+    }
+    if (decision.action === "speak_on") {
+      speakEnabledRef.current = true;
+      setSpeakEnabled(true);
+    }
+  }
+
   function stopSpeakingNow() {
     speakingRef.current = false;
     speechAbortRef.current?.abort();
@@ -582,28 +601,37 @@ function AppVoiceExperience({
 
   async function speakLastCorrectionOnce(text: string) {
     if (!speakEnabledRef.current || !text.trim()) return;
-    const response = await fetch("/api/speak", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        provider: settings.provider,
-        text,
-        voice: settings.voice,
-        languageName: settings.languageName,
-        style: "Speak exactly this stored correction sentence. Do not add words like correction, correct, corrige, hint, or explanation."
-      })
-    });
-    if (!response.ok) {
-      console.error(await response.text().catch(() => "Could not speak last correction."));
-      return;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), VOICE_AGENT_REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch("/api/speak", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({
+          provider: settings.provider,
+          text,
+          voice: settings.voice,
+          languageName: settings.languageName,
+          style: "Speak exactly this stored correction sentence. Do not add words like correction, correct, corrige, hint, or explanation."
+        })
+      });
+      if (!response.ok) {
+        console.error(await response.text().catch(() => "Could not speak last correction."));
+        return;
+      }
+      const audio = await response.blob();
+      const audioBase64 = await blobToBase64(audio);
+      const audioFormat = audio.type.includes("wav") ? "wav" : "mp3";
+      const playResult = await playVoiceAgentAudio({ audioBase64, audioFormat });
+      if (lastAudioUrl) URL.revokeObjectURL(lastAudioUrl);
+      setLastAudioUrl(URL.createObjectURL(audio));
+      if (!playResult.played && !playResult.stopped) console.error("Stored correction audio returned, but browser playback failed");
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      window.clearTimeout(timeoutId);
     }
-    const audio = await response.blob();
-    const audioBase64 = await blobToBase64(audio);
-    const audioFormat = audio.type.includes("wav") ? "wav" : "mp3";
-    const playResult = await playVoiceAgentAudio({ audioBase64, audioFormat });
-    if (lastAudioUrl) URL.revokeObjectURL(lastAudioUrl);
-    setLastAudioUrl(URL.createObjectURL(audio));
-    if (!playResult.played && !playResult.stopped) console.error("Stored correction audio returned, but browser playback failed");
   }
 
   return (
@@ -689,13 +717,21 @@ function AppVoiceExperience({
   );
 }
 
-function isAudioAnalyserResponse(value: unknown): value is { json: { flags: { has_corrections: boolean; correction_type: string }; chat_text_to_user: string } } {
+function isAudioAnalyserResponse(value: unknown): value is { json: { flags: VoiceAgentResultFlags; chat_text_to_user: string } } {
   return Boolean(value && typeof value === "object" && "json" in value);
 }
 
-function isVoiceAgentTextChatResponse(value: unknown): value is { json: { flags: { has_corrections: boolean; correction_type: string }; chat_text_to_user: string } } {
+function isVoiceAgentTextChatResponse(value: unknown): value is { json: { flags: VoiceAgentResultFlags; chat_text_to_user: string } } {
   return Boolean(value && typeof value === "object" && "json" in value);
 }
+
+type VoiceAgentResultFlags = {
+  keyword_on_sent?: boolean;
+  keyword_off_sent?: boolean;
+  keyword_detected?: "on" | "off" | "none";
+  has_corrections: boolean;
+  correction_type: string;
+};
 
 function signalFromCorrectionType(correctionType: string): AppSignal {
   if (correctionType === "pronunciation" || correctionType === "accent") {

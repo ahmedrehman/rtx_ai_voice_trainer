@@ -338,9 +338,9 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
         ].join("\n")
       }
     );
-    const parsed = parseAudioAnalyserJson(ai.text);
+    const parsed = controlOnlyKeywordJson(parseAudioAnalyserJson(ai.text));
     const chatTextToUser = validateAudioAnalyserChatText(parsed.chat_text_to_user || parsed.hint, {
-      requiresUserText: parsed.flags.has_corrections
+      requiresUserText: parsed.flags.has_corrections && parsed.flags.keyword_detected === "none"
     });
     const spokenAudioText = parsed.flags.has_corrections
       ? (parsed.text_corrected.trim() || chatTextToUser)
@@ -534,6 +534,23 @@ function emptyAnalyserJson(message: string): AudioAnalyserOutput["json"] {
       is_chat_answer_or_correction: "none"
     },
     chat_text_to_user: message,
+    text_corrected: "",
+    hint: ""
+  };
+}
+
+function controlOnlyKeywordJson(json: AudioAnalyserOutput["json"]): AudioAnalyserOutput["json"] {
+  if (json.flags.keyword_detected === "none") return json;
+  return {
+    flags: {
+      ...json.flags,
+      keyword_on_sent: json.flags.keyword_detected === "on",
+      keyword_off_sent: json.flags.keyword_detected === "off",
+      has_corrections: false,
+      correction_type: "none",
+      is_chat_answer_or_correction: "none"
+    },
+    chat_text_to_user: "",
     text_corrected: "",
     hint: ""
   };
