@@ -315,7 +315,7 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
     `TEXT USER CHAT: ${input.textUserChat || ""}`,
     `HISTORY 5 LAST TEXT CHATS: ${JSON.stringify(input.history5LastTextChats)}`,
     "Use the audio when it helps, but do not turn the answer into open small talk.",
-    "The server will create spoken audio later from json.chat_text_to_user only."
+    "The server will create spoken audio later only when json.flags.has_corrections is true."
   ].join("\n");
 
   try {
@@ -339,9 +339,14 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
       }
     );
     const parsed = parseAudioAnalyserJson(ai.text);
-    const chatTextToUser = validateAudioAnalyserChatText(parsed.chat_text_to_user || parsed.hint);
-    const spokenAudio = input.speakEnabled
-      ? await createAnalyserSpeechAudio(config, input, chatTextToUser).catch((error) => ({
+    const chatTextToUser = validateAudioAnalyserChatText(parsed.chat_text_to_user || parsed.hint, {
+      requiresUserText: parsed.flags.has_corrections
+    });
+    const spokenAudioText = parsed.flags.has_corrections
+      ? (parsed.text_corrected.trim() || chatTextToUser)
+      : "";
+    const spokenAudio = input.speakEnabled && parsed.flags.has_corrections && spokenAudioText
+      ? await createAnalyserSpeechAudio(config, input, spokenAudioText).catch((error) => ({
           audioBase64: "",
           audioFormat: "",
           model: "",
@@ -362,8 +367,8 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
         inputWithoutAudio: withoutAnalyserAudio(input),
         promptSent: { systemPrompt, taskPrompt, responseJsonFormat: input.systemPrompt.responseJsonFormat },
         rawAiText: ai.text,
-        spokenAudioText: input.speakEnabled ? chatTextToUser : undefined,
-        spokenAudioSource: input.speakEnabled ? "json.chat_text_to_user" : undefined,
+        spokenAudioText: input.speakEnabled && parsed.flags.has_corrections ? spokenAudioText : undefined,
+        spokenAudioSource: input.speakEnabled && parsed.flags.has_corrections ? "json.text_corrected" : undefined,
         spokenAudioError: spokenAudio && "error" in spokenAudio ? String(spokenAudio.error) : undefined
       }
     };
@@ -395,7 +400,7 @@ async function createAnalyserSpeechAudio(config: ServerAiConfig, input: AudioAna
       text,
       voice: input.voice || config.voice,
       languageName: "",
-      style: "Speak only this user-facing answer. Do not say JSON, braces, field names, flags, or debug information."
+      style: "Speak exactly the provided text. Do not add words like correction, correct, corrige, hint, explanation, JSON, braces, field names, flags, or debug information."
     }
   );
   const buffer = await new Response(speech.body).arrayBuffer();
@@ -534,9 +539,9 @@ function emptyAnalyserJson(message: string): AudioAnalyserOutput["json"] {
   };
 }
 
-export function validateAudioAnalyserChatText(text: string) {
+export function validateAudioAnalyserChatText(text: string, options: { requiresUserText?: boolean } = {}) {
   const value = text.trim();
-  if (!value) {
+  if (!value && options.requiresUserText) {
     throw new Error("AUDIO_ANALYSER returned no user-facing chat_text_to_user.");
   }
   if (containsInternalProcessText(value)) {

@@ -24,56 +24,56 @@ test("FULL APP correction flow checks input audio, listen/speak gates, chat visi
   assert.equal(app.aiTextChatCalls, 0);
   assert.equal(app.aiAudioAnalyserCalls, 0);
   assert.equal(app.chatMessages.length, 0);
-  assert.equal(app.lastAiAudioTranscript, "");
+  assert.equal(app.lastAiAudioTranscript, null);
   assert.equal(app.lamp, "unchanged");
 
   const step1 = await app.sendChatText("J' ai malade", false, "Je suis malade");
   assertCorrectionStep(step1, "Je suis malade");
   assert.equal(app.lamp, "red");
-  assert.equal(step1.audioTranscript, "");
+  assert.equal(step1.audioTranscript, null);
 
   const step2 = await app.sendChatText("Je suis malade", false);
   assertNoCorrectionStep(step2);
   assert.equal(app.lamp, "green");
   assert.equal(step2.surfacedChatText, "");
-  assert.equal(step2.audioTranscript, "");
+  assert.equal(step2.audioTranscript, null);
 
   app.listenEnabled = true;
   const step3 = await app.sendChatText("J' ai malade", false, "Je suis malade");
   assertCorrectionStep(step3, "Je suis malade");
   assert.equal(app.lamp, "red");
-  assert.equal(step3.audioTranscript, "");
+  assert.equal(step3.audioTranscript, null);
 
   const step4 = await app.sendChatText("Il y a quelque chose qui ne pas.", false, "Il y a quelque chose qui ne va pas.");
-  assertCorrectionStep(step4, "Il y a quelque chose qui ne va pas");
+  assertCorrectionStep(step4, "Il y a quelque chose qui ne va pas.");
   assert.equal(app.lamp, "red");
-  assert.equal(step4.audioTranscript, "");
-  assert.equal(app.lastCorrectionText.includes("Il y a quelque chose qui ne va pas"), true);
+  assert.equal(step4.audioTranscript, null);
+  assert.equal(app.lastCorrectionText, "Il y a quelque chose qui ne va pas.");
 
   await app.turnSpeakOnWithoutNewInput();
   assert.equal(app.speakEnabled, true);
-  assert.match(normalizeText(app.lastAiAudioTranscript), /il y a quelque chose qui ne va pas/);
+  assertSpokenCorrectionOnly(app.lastAiAudioTranscript, "Il y a quelque chose qui ne va pas.");
   const speechCallsAfterStep5 = app.aiSpeechCalls;
   const textCallsAfterStep5 = app.aiTextChatCalls;
 
   app.noInputWhileSpeakAlreadyOn();
   assert.equal(app.aiTextChatCalls, textCallsAfterStep5);
   assert.equal(app.aiSpeechCalls, speechCallsAfterStep5);
-  assert.match(normalizeText(app.lastAiAudioTranscript), /il y a quelque chose qui ne va pas/);
+  assertSpokenCorrectionOnly(app.lastAiAudioTranscript, "Il y a quelque chose qui ne va pas.");
 
   const step7 = await app.sendChatText("J' ai malade", true, "Je suis malade");
   assertCorrectionStep(step7, "Je suis malade");
-  assert.match(normalizeText(step7.audioTranscript), /je suis malade/);
+  assertSpokenCorrectionOnly(step7.audioTranscript, "Je suis malade");
 
   const step8 = await app.sendChatText("Je suis malade", true);
   assertNoCorrectionStep(step8);
   assert.equal(app.lamp, "green");
   assert.equal(step8.surfacedChatText, "");
-  assert.equal(step8.audioTranscript, "");
+  assert.equal(step8.audioTranscript, null);
 
   const step10 = await app.sendChatText("J' ai malade", true, "Je suis malade");
   assertCorrectionStep(step10, "Je suis malade");
-  assert.match(normalizeText(step10.audioTranscript), /je suis malade/);
+  assertSpokenCorrectionOnly(step10.audioTranscript, "Je suis malade");
 });
 
 function createFullAppHarness(settings: VoiceAgentSettings) {
@@ -84,7 +84,7 @@ function createFullAppHarness(settings: VoiceAgentSettings) {
     lamp: "unchanged" as "unchanged" | "red" | "green",
     chatMessages: [] as string[],
     lastCorrectionText: "",
-    lastAiAudioTranscript: "",
+    lastAiAudioTranscript: null as string | null,
     aiTextChatCalls: 0,
     aiAudioAnalyserCalls: 0,
     aiSpeechCalls: 0,
@@ -102,10 +102,10 @@ function createFullAppHarness(settings: VoiceAgentSettings) {
         speakEnabled,
         additionalInstructions: [
           "This is a full app business test.",
-          "When the latest text is \"J' ai malade\", correct it to \"Je suis malade\" and set has_corrections true.",
-          "When the latest text is \"Je suis malade\", set has_corrections false.",
-          "When the latest text is \"Il y a quelque chose qui ne pas.\", correct it to \"Il y a quelque chose qui ne va pas.\" and set has_corrections true.",
-          "Free chat is off: do not add greetings, readiness questions, or unrelated conversation."
+          "When the latest text is \"J' ai malade\", return exactly \"Je suis malade\" in chat_text_to_user and text_corrected, and set has_corrections true.",
+          "When the latest text is \"Je suis malade\", set has_corrections false and return empty strings in chat_text_to_user, text_corrected, and hint.",
+          "When the latest text is \"Il y a quelque chose qui ne pas.\", return exactly \"Il y a quelque chose qui ne va pas.\" in chat_text_to_user and text_corrected, and set has_corrections true.",
+          "Free chat is off: do not add greetings, readiness questions, unrelated conversation, prefixes, labels, or explanations."
         ].join("\n")
       });
       assert.equal(result.status.ok, true, result.status.error);
@@ -120,7 +120,7 @@ function createFullAppHarness(settings: VoiceAgentSettings) {
         this.lamp = "green";
         this.lastCorrectionText = "";
       }
-      let audioTranscript = "";
+      let audioTranscript: string | null = null;
       if (result.audio?.audioBase64) {
         this.aiSpeechCalls += 1;
         audioTranscript = await transcribeAudio({
@@ -131,7 +131,8 @@ function createFullAppHarness(settings: VoiceAgentSettings) {
         this.lastAiAudioTranscript = audioTranscript;
       }
       if (expectedCorrection) {
-        assert.match(normalizeText(result.json.chat_text_to_user), new RegExp(escapeRegExp(normalizeText(expectedCorrection))));
+        assert.equal(result.json.chat_text_to_user, expectedCorrection);
+        assert.equal(result.json.text_corrected, expectedCorrection);
       }
       return { result, surfacedChatText, audioTranscript };
     },
@@ -151,13 +152,17 @@ function createFullAppHarness(settings: VoiceAgentSettings) {
 
 function assertCorrectionStep(step: Awaited<ReturnType<ReturnType<typeof createFullAppHarness>["sendChatText"]>>, expected: string) {
   assert.equal(step.result.json.flags.has_corrections, true);
-  assert.match(normalizeText(step.result.json.chat_text_to_user), new RegExp(escapeRegExp(normalizeText(expected))));
-  assert.match(normalizeText(step.surfacedChatText), new RegExp(escapeRegExp(normalizeText(expected))));
+  assert.equal(step.result.json.chat_text_to_user, expected);
+  assert.equal(step.result.json.text_corrected, expected);
+  assert.equal(step.surfacedChatText, expected);
 }
 
 function assertNoCorrectionStep(step: Awaited<ReturnType<ReturnType<typeof createFullAppHarness>["sendChatText"]>>) {
   assert.equal(step.result.json.flags.has_corrections, false);
   assert.equal(step.surfacedChatText, "");
+  assert.equal(step.result.json.chat_text_to_user, "");
+  assert.equal(step.result.json.text_corrected, "");
+  assert.equal(step.result.json.hint, "");
   assert.equal(step.result.audio, null);
 }
 
@@ -165,6 +170,12 @@ function assertInputAudioRepresentsBadPhrase(transcript: string) {
   const normalized = normalizeText(transcript);
   assert.match(normalized, /malade/);
   assert.doesNotMatch(normalized, /je suis malade/);
+}
+
+function assertSpokenCorrectionOnly(transcript: string | null, expected: string) {
+  assert.notEqual(transcript, null);
+  assert.equal(normalizeText(transcript || ""), normalizeText(expected));
+  assert.doesNotMatch(normalizeText(transcript || ""), /\b(correction|correct|correcte|corrige|corriger|hint|conseil|attention|prononciation)\b/);
 }
 
 type TestAudio = {
@@ -210,8 +221,4 @@ function normalizeText(value: string) {
     .replace(/[^a-z0-9'\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

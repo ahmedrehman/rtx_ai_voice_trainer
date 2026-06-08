@@ -581,7 +581,7 @@ function AppVoiceExperience({
         text,
         voice: settings.voice,
         languageName: settings.languageName,
-        style: "Speak only this stored correction. Do not add explanation."
+        style: "Speak exactly this stored correction sentence. Do not add words like correction, correct, corrige, hint, or explanation."
       })
     });
     if (!response.ok) {

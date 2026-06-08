@@ -758,7 +758,7 @@ export async function VOICE_AGENT_SERVER_ANALYSE_AUDIO(config: ServerAiConfig, i
   speakEnabled?: boolean;
 }): Promise<AudioAnalyserOutput> {
   const prompts = VOICE_AGENT_CREATE_PROMPTS(input.settings);
-  return AUDIO_ANALYSER(config, {
+  const result = await AUDIO_ANALYSER(config, {
     provider: input.settings.provider,
     systemPrompt: {
       systemPrompt: prompts.systemPrompt,
@@ -775,6 +775,22 @@ export async function VOICE_AGENT_SERVER_ANALYSE_AUDIO(config: ServerAiConfig, i
     voice: input.settings.voice,
     speakEnabled: Boolean(input.speakEnabled)
   });
+  if (!result.status.ok || VOICE_AGENT_SHOULD_SURFACE_CHAT(input.settings, result.json)) return result;
+  return {
+    ...result,
+    json: {
+      ...result.json,
+      chat_text_to_user: "",
+      text_corrected: "",
+      hint: ""
+    },
+    audio: null,
+    debug: {
+      ...result.debug,
+      spokenAudioText: undefined,
+      spokenAudioSource: undefined
+    }
+  };
 }
 
 export async function VOICE_AGENT_SERVER_STREAM_TEXT_CHAT(config: ServerAiConfig, body: VoiceAgentTextChatRequest): Promise<Response> {
@@ -979,7 +995,8 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
     "Answer or correct only the latest textUserChat.",
     "Use history only as background context; never answer, correct, or summarize an older history item unless the latest textUserChat explicitly asks about it.",
     "Return exactly one JSON object. Do not wrap it in markdown.",
-    "chat_text_to_user must be non-empty and must contain the actual chat answer shown to the user."
+    "For corrections, chat_text_to_user must equal text_corrected exactly. No prefix, no explanation, no extra words.",
+    "When free chat is disabled and there is no correction, chat_text_to_user must be an empty string."
   ].join("\n");
   const taskPrompt = [
     `Target language: ${settings.languageName}.`,
@@ -992,11 +1009,12 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
       ? "Free chat is enabled: answer normal typed questions naturally, but correct practice sentences first."
       : "Free chat is disabled: do not continue open conversation. For typed input, correct, confirm, or give one short hint for the latest practice sentence.",
     "If the typed message is a target-language practice sentence, check for correction before casual chat.",
-    "If the typed message has a useful language mistake, set has_corrections true and explain briefly.",
+    "If the typed message has a useful language mistake, set has_corrections true and return only the corrected sentence.",
+    "If the typed practice sentence is already correct and free chat is disabled, set has_corrections false and return empty chat_text_to_user, empty text_corrected, and empty hint.",
     "In text-chat mode, correction_type may be grammar, vocabulary, meaning, or none. Do not use pronunciation/accent.",
     "Set is_chat_answer_or_correction to chat_answer for a normal answer, correction for correction feedback, or none only for unusable input.",
-    "chat_text_to_user is the message displayed in the chat window. It must not be empty for normal input.",
-    "Keep chat_text_to_user short and natural.",
+    "chat_text_to_user is the message displayed in the chat window.",
+    "For corrections, chat_text_to_user must be the corrected sentence only.",
     body.additionalInstructions || "",
     prompts.howToRespond,
     "",
@@ -1033,10 +1051,15 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
       }
     );
     const parsed = applyTextKeywordFlags(parseVoiceAgentJson(ai.rawText), body.textUserChat || "", settings);
-    const chatText = parsed.chat_text_to_user || parsed.hint || fallbackTextChatAnswer(body.textUserChat || "", settings);
-    const shouldCreateAudio = Boolean(body.speakEnabled && VOICE_AGENT_SHOULD_SURFACE_CHAT(settings, parsed));
+    const shouldSurfaceChat = VOICE_AGENT_SHOULD_SURFACE_CHAT(settings, parsed);
+    const chatText = shouldSurfaceChat
+      ? correctionOnlyChatText(parsed) || parsed.chat_text_to_user || parsed.hint || fallbackTextChatAnswer(body.textUserChat || "", settings)
+      : "";
+    const outputJson = { ...parsed, chat_text_to_user: chatText };
+    const speechText = parsed.flags.has_corrections ? VOICE_AGENT_CORRECTION_TEXT(outputJson) : chatText;
+    const shouldCreateAudio = Boolean(body.speakEnabled && shouldSurfaceChat && parsed.flags.has_corrections && speechText.trim());
     const audio = shouldCreateAudio
-      ? await createTextChatSpeech(config, settings, chatText).catch((error) => ({
+      ? await createTextChatSpeech(config, settings, speechText).catch((error) => ({
           audioBase64: "",
           audioFormat: "",
           model: "",
@@ -1045,7 +1068,7 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
       : null;
     return {
       status: doneTextStatus(startedAt),
-      json: { ...parsed, chat_text_to_user: chatText },
+      json: outputJson,
       audio: audio?.audioBase64 ? { audioBase64: audio.audioBase64, audioFormat: audio.audioFormat, model: audio.model } : null,
       debug: {
         input: requestForDebug,
@@ -1055,7 +1078,7 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
           responseJsonFormat: prompts.responseJsonFormat
         },
         rawAiText: ai.rawText,
-        spokenAudioText: shouldCreateAudio ? chatText : undefined,
+        spokenAudioText: shouldCreateAudio ? speechText : undefined,
         spokenAudioError: audio && "error" in audio ? String(audio.error) : undefined
       }
     };
@@ -1132,6 +1155,11 @@ export function VOICE_AGENT_SHOULD_SURFACE_CHAT(settings: VoiceAgentSettings, js
 
 export function VOICE_AGENT_CORRECTION_TEXT(json: AudioAnalyserOutput["json"]) {
   return json.text_corrected.trim() || json.chat_text_to_user.trim() || json.hint.trim();
+}
+
+function correctionOnlyChatText(json: AudioAnalyserOutput["json"]) {
+  if (!json.flags.has_corrections) return "";
+  return json.text_corrected.trim() || json.chat_text_to_user.trim();
 }
 
 export const VOICE_AGENT_FRONTEND = {
@@ -1294,7 +1322,7 @@ async function createTextChatSpeech(config: ServerAiConfig, settings: VoiceAgent
       text,
       voice: settings.voice,
       languageName: settings.languageName,
-      style: "Speak only the user-facing chat answer. Do not say JSON, field names, flags, or debug information."
+      style: "Speak exactly the provided text. Do not add words like correction, correct, corrige, hint, explanation, JSON, field names, flags, or debug information."
     }
   );
   const buffer = await new Response(speech.body).arrayBuffer();

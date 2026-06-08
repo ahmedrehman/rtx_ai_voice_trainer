@@ -24,7 +24,8 @@ test("AUDIO_ANALYSER real OpenAI call returns json answer and optional audio", {
   );
 
   assert.equal(result.status.ok, true, result.status.error);
-  assert.ok(result.json.chat_text_to_user.trim().length > 0);
   assert.equal(typeof result.json.flags.has_corrections, "boolean");
+  assert.equal(result.audio, null);
+  assert.doesNotMatch(result.json.chat_text_to_user, /need to listen to the audio|provide the original microphone audio|please upload|unable to analyze audio directly|hold on|will now analyze/i);
   assert.match(result.debug.rawAiText, /\{/);
 });

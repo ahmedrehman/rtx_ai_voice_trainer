@@ -12,9 +12,19 @@ test("VOICE_AGENT real five-turn conversation handles listen/speak changes witho
     history.push({ id: String(history.length + 1), role, text, createdAt: new Date().toISOString() });
   };
   const last5 = () => history.slice(-5).map((message) => `${message.role}: ${message.text}`);
-  const assertUserFacing = (text: string) => {
-    assert.ok(text.trim().length > 0);
+  const assertNoInternalText = (text: string) => {
     assert.doesNotMatch(text, /need to listen to the audio|provide the original microphone audio|please upload|unable to analyze audio directly|hold on|will now analyze/i);
+  };
+  const assertCorrectionVisibility = (turn: { json: { flags: { has_corrections: boolean }; chat_text_to_user: string }; audio: unknown }, speakEnabled: boolean) => {
+    assertNoInternalText(turn.json.chat_text_to_user);
+    if (turn.json.flags.has_corrections) {
+      assert.ok(turn.json.chat_text_to_user.trim().length > 0);
+      if (speakEnabled) assert.ok(turn.audio);
+      if (!speakEnabled) assert.equal(turn.audio, null);
+      return;
+    }
+    assert.equal(turn.json.chat_text_to_user, "");
+    assert.equal(turn.audio, null);
   };
 
   const turn1 = await VOICE_AGENT_BACKEND.TEXT_CHAT(serverConfig(), {
@@ -24,10 +34,9 @@ test("VOICE_AGENT real five-turn conversation handles listen/speak changes witho
     speakEnabled: false
   });
   assert.equal(turn1.status.ok, true, turn1.status.error);
-  assert.equal(turn1.audio, null);
-  assertUserFacing(turn1.json.chat_text_to_user);
+  assertCorrectionVisibility(turn1, false);
   remember("user", "Bonjour.");
-  remember("assistant", turn1.json.chat_text_to_user);
+  if (turn1.json.chat_text_to_user) remember("assistant", turn1.json.chat_text_to_user);
 
   const turn2 = await VOICE_AGENT_BACKEND.TEXT_CHAT(serverConfig(), {
     settings,
@@ -36,9 +45,8 @@ test("VOICE_AGENT real five-turn conversation handles listen/speak changes witho
     speakEnabled: true
   });
   assert.equal(turn2.status.ok, true, turn2.status.error);
-  assert.ok(turn2.audio?.audioBase64, turn2.debug.spokenAudioError || "Speak on must return audio.");
   assert.equal(turn2.json.flags.has_corrections, true);
-  assertUserFacing(turn2.json.chat_text_to_user);
+  assertCorrectionVisibility(turn2, true);
   remember("user", "Je suis aller au magasin hier.");
   remember("assistant", turn2.json.chat_text_to_user);
 
@@ -51,9 +59,8 @@ test("VOICE_AGENT real five-turn conversation handles listen/speak changes witho
     speakEnabled: false
   });
   assert.equal(turn3.status.ok, true, turn3.status.error);
-  assert.equal(turn3.audio, null);
-  assertUserFacing(turn3.json.chat_text_to_user);
-  remember("assistant", turn3.json.chat_text_to_user);
+  assertCorrectionVisibility(turn3, false);
+  if (turn3.json.chat_text_to_user) remember("assistant", turn3.json.chat_text_to_user);
 
   const turn4 = await VOICE_AGENT_BACKEND.TEXT_CHAT(serverConfig(), {
     settings,
@@ -64,10 +71,9 @@ test("VOICE_AGENT real five-turn conversation handles listen/speak changes witho
   assert.equal(turn4.status.ok, true, turn4.status.error);
   assert.equal(turn4.json.flags.keyword_off_sent, true);
   assert.equal(turn4.json.flags.keyword_detected, "off");
-  assert.equal(turn4.audio, null);
-  assertUserFacing(turn4.json.chat_text_to_user);
+  assertCorrectionVisibility(turn4, false);
   remember("user", "computer off");
-  remember("assistant", turn4.json.chat_text_to_user);
+  if (turn4.json.chat_text_to_user) remember("assistant", turn4.json.chat_text_to_user);
 
   const turn5 = await VOICE_AGENT_BACKEND.TEXT_CHAT(serverConfig(), {
     settings,
@@ -77,7 +83,6 @@ test("VOICE_AGENT real five-turn conversation handles listen/speak changes witho
     additionalInstructions: "Answer only the latest user message. Do not discuss previous keyword commands."
   });
   assert.equal(turn5.status.ok, true, turn5.status.error);
-  assert.equal(turn5.audio, null);
-  assertUserFacing(turn5.json.chat_text_to_user);
+  assertCorrectionVisibility(turn5, false);
   assert.doesNotMatch(turn5.json.chat_text_to_user.toLowerCase(), /computer off|keyword|mot.?cle/);
 });
