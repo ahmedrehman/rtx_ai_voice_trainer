@@ -11,7 +11,7 @@ import {
   type ServerAiConfig
 } from "../lib_server_ai_voice";
 import { createAudioAnalyserDefaultPrompts } from "../lib_server_ai_voice/audioAnalyserPrompts";
-import { DUMBB_TEXT_TO_SPEACH, PURE_TEXT_TO_TEXT_CORRECTION, STREAM_TEXT_CHAT_FAST } from "../mod_ai_calls";
+import { DUMBB_TEXT_TO_SPEACH, PURE_TEXT_TO_TEXT_CORRECTION, STREAM_AUDIO_TO_AI_TEXT_AND_AUDIO, STREAM_TEXT_CHAT_FAST } from "../mod_ai_calls";
 
 export const VOICE_AGENT_SAMPLE_AUDIO_URL = "/test-audio/sample-voice-test.wav";
 
@@ -21,6 +21,7 @@ export type VoiceAgentSettings = {
   languageName: string;
   keywordOn: string;
   keywordOff: string;
+  allowFreeChat: boolean;
   topicId: VoiceAgentTopicId;
   topic: string;
   prompts?: VoiceAgentPromptConfig;
@@ -88,6 +89,10 @@ export type VoiceAgentTextChatInput = {
 
 export type VoiceAgentStreamTextChatInput = Omit<VoiceAgentTextChatInput, "speakEnabled"> & {
   onEvent?: (event: VoiceAgentStreamTextChatEvent) => void;
+};
+
+export type VoiceAgentStreamVoiceTurnInput = Omit<VoiceAgentAnalyseInput, "speakEnabled"> & {
+  onEvent?: (event: VoiceAgentStreamVoiceTurnEvent) => void;
 };
 
 export type VoiceAgentTextChatRequest = {
@@ -163,6 +168,68 @@ export type VoiceAgentStreamTextChatOutput = {
   events: VoiceAgentStreamTextChatEvent[];
 };
 
+export type VoiceAgentStreamVoiceTurnEvent =
+  | {
+      type: "start";
+      status: {
+        method: "VOICE_AGENT_STREAM_VOICE_TURN";
+        ok: true;
+        phase: "streaming";
+        startedAt: string;
+      };
+      debug: {
+        input: Omit<VoiceAgentServerAnalyseRequest, "audioBase64"> & { audioBase64: string };
+        promptSent: {
+          systemPrompt: string;
+          taskPrompt: string;
+          responseJsonFormat: string;
+        };
+        playbackNote: string;
+      };
+    }
+  | { type: "provider_start"; model: string; providerRequest: unknown }
+  | { type: "text_delta"; streamEventType: "append_delta"; text: string }
+  | { type: "audio_transcript_delta"; streamEventType: "append_delta"; text: string }
+  | { type: "audio_delta"; audioBase64: string; audioFormat: "pcm16"; byteLength: number }
+  | {
+      type: "done";
+      status: {
+        method: "VOICE_AGENT_STREAM_VOICE_TURN";
+        ok: true;
+        phase: "done";
+        startedAt: string;
+        finishedAt: string;
+      };
+      text: string;
+      audio: { audioBase64: string; audioFormat: "wav"; chunkCount: number } | null;
+    }
+  | {
+      type: "error";
+      status: {
+        method: "VOICE_AGENT_STREAM_VOICE_TURN";
+        ok: false;
+        phase: "error";
+        startedAt: string;
+        finishedAt: string;
+        error: string;
+      };
+    };
+
+export type VoiceAgentStreamVoiceTurnOutput = {
+  status: {
+    method: "VOICE_AGENT_STREAM_VOICE_TURN";
+    ok: boolean;
+    phase: "done" | "error";
+    startedAt: string;
+    finishedAt: string;
+    error?: string;
+  };
+  text: string;
+  audio: { audioBase64: string; audioFormat: "wav"; chunkCount: number } | null;
+  request: Omit<VoiceAgentServerAnalyseRequest, "audioBase64"> & { audioBase64: string };
+  events: VoiceAgentStreamVoiceTurnEvent[];
+};
+
 export type VoiceAgentTextChatOutput = {
   status: {
     method: "VOICE_AGENT_TEXT_CHAT";
@@ -221,6 +288,7 @@ export const VOICE_AGENT_DEFAULT_SETTINGS: VoiceAgentSettings = {
   languageName: "French",
   keywordOn: "computer",
   keywordOff: "computer off",
+  allowFreeChat: false,
   topicId: "french_for_german",
   topic: "French speaking practice for a German learner"
 };
@@ -253,6 +321,7 @@ export function VOICE_AGENT_CREATE_SETTINGS(topicId: VoiceAgentTopicId, current:
     topicId: preset.id,
     languageName: preset.languageName,
     topic: preset.topic,
+    allowFreeChat: false,
     prompts: undefined
   };
 }
@@ -263,7 +332,8 @@ export function VOICE_AGENT_CREATE_PROMPTS(settings: VoiceAgentSettings) {
     languageName: settings.languageName,
     topic: settings.topic,
     keywordOn: settings.keywordOn,
-    keywordOff: settings.keywordOff
+    keywordOff: settings.keywordOff,
+    allowFreeChat: settings.allowFreeChat
   });
   if (settings.topicId === "history") {
     return {
@@ -280,8 +350,16 @@ export function VOICE_AGENT_CREATE_PROMPTS(settings: VoiceAgentSettings) {
       ...basePrompts,
       task: [
         basePrompts.task,
+        "This topic is a French correction trainer for a German learner, not an open free-chat assistant.",
         "Focus on mistakes common for German speakers learning French when a correction is actually useful.",
-        "For normal chat or greetings, answer naturally first. Do not mention pronunciation or accent unless giving a concrete correction."
+        "For French practice utterances, check correction before casual chat.",
+        "If the user made a concrete French mistake, return a correction result with has_corrections=true.",
+        "If the French phrase is correct, say it is correct briefly and give at most one useful hint.",
+        settings.allowFreeChat
+          ? "Free chat is enabled: answer normal user questions naturally, but still correct practice phrases first."
+          : "Free chat is disabled: do not start or continue open conversation. Only correct, confirm, or give one short hint for the latest practice input.",
+        "Do not greet the user, ask if they are ready, or add unrelated small talk unless free chat is enabled and the latest user message asks for that.",
+        "Do not mention pronunciation or accent unless giving a concrete correction."
       ].join("\n")
     };
   }
@@ -329,6 +407,7 @@ export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): 
         topic: input.settings.topic,
         keywordOn: input.settings.keywordOn,
         keywordOff: input.settings.keywordOff,
+        allowFreeChat: input.settings.allowFreeChat,
         voice: input.settings.voice
       },
       systemPrompt: prompts.systemPrompt,
@@ -409,6 +488,7 @@ export async function VOICE_AGENT_SEND_TEXT_CHAT(input: VoiceAgentTextChatInput)
       topic: input.settings.topic,
       keywordOn: input.settings.keywordOn,
       keywordOff: input.settings.keywordOff,
+      allowFreeChat: input.settings.allowFreeChat,
       voice: input.settings.voice
     },
     systemPrompt: prompts.systemPrompt,
@@ -478,6 +558,7 @@ export async function VOICE_AGENT_STREAM_TEXT_CHAT(input: VoiceAgentStreamTextCh
       topic: input.settings.topic,
       keywordOn: input.settings.keywordOn,
       keywordOff: input.settings.keywordOff,
+      allowFreeChat: input.settings.allowFreeChat,
       voice: input.settings.voice
     },
     additionalInstructions: input.additionalInstructions || ""
@@ -502,7 +583,7 @@ export async function VOICE_AGENT_STREAM_TEXT_CHAT(input: VoiceAgentStreamTextCh
       const { done, value } = await reader.read();
       if (done) break;
       pending += decoder.decode(value, { stream: true });
-      const parsed = consumeVoiceAgentSseEvents(pending);
+      const parsed = consumeVoiceAgentSseEvents<VoiceAgentStreamTextChatEvent>(pending);
       pending = parsed.remaining;
       for (const event of parsed.events) {
         events.push(event);
@@ -513,7 +594,7 @@ export async function VOICE_AGENT_STREAM_TEXT_CHAT(input: VoiceAgentStreamTextCh
       }
     }
 
-    for (const event of consumeVoiceAgentSseEvents(pending).events) {
+    for (const event of consumeVoiceAgentSseEvents<VoiceAgentStreamTextChatEvent>(pending).events) {
       events.push(event);
       input.onEvent?.(event);
       if (event.type === "delta") text += event.text;
@@ -538,6 +619,114 @@ export async function VOICE_AGENT_STREAM_TEXT_CHAT(input: VoiceAgentStreamTextCh
       status: errorStreamStatus(startedAt, message),
       text,
       request,
+      events
+    };
+  }
+}
+
+export async function VOICE_AGENT_STREAM_VOICE_TURN(input: VoiceAgentStreamVoiceTurnInput): Promise<VoiceAgentStreamVoiceTurnOutput> {
+  const startedAt = new Date().toISOString();
+  const endpoint = input.endpoint || "/api/voice-agent/voice-turn-stream";
+  const prompts = VOICE_AGENT_CREATE_PROMPTS(input.settings);
+  let request: VoiceAgentStreamVoiceTurnOutput["request"] | null = null;
+  const events: VoiceAgentStreamVoiceTurnEvent[] = [];
+  let text = "";
+  let audio: VoiceAgentStreamVoiceTurnOutput["audio"] = null;
+
+  try {
+    const aiAudio = await normalizeAudioBlobForOpenAi(input.audio);
+    const audioBase64 = await blobToBase64(aiAudio.blob);
+    request = {
+      audioBase64: `[base64 length=${audioBase64.length}]`,
+      audioFormat: aiAudio.audioFormat,
+      textUserChat: input.textUserChat,
+      history5LastTextChats: input.history5LastTextChats,
+      provider: input.settings.provider,
+      voice: input.settings.voice,
+      settings: {
+        languageName: input.settings.languageName,
+        topicId: input.settings.topicId,
+        topic: input.settings.topic,
+        keywordOn: input.settings.keywordOn,
+        keywordOff: input.settings.keywordOff,
+        allowFreeChat: input.settings.allowFreeChat,
+        voice: input.settings.voice
+      },
+      systemPrompt: prompts.systemPrompt,
+      additionalInstructions: input.additionalInstructions || "",
+      promptConfig: {
+        systemTask: prompts.task,
+        howToRespond: prompts.howToRespond,
+        responseJsonFormat: prompts.responseJsonFormat
+      }
+    };
+    const wireRequest = { ...request, audioBase64 };
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(wireRequest)
+    });
+    if (!response.ok || !response.body) {
+      throw new Error(await response.text().catch(() => `VOICE_AGENT_STREAM_VOICE_TURN failed with ${response.status}`));
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      const parsed = consumeVoiceAgentSseEvents<VoiceAgentStreamVoiceTurnEvent>(pending);
+      pending = parsed.remaining;
+      for (const event of parsed.events) {
+        events.push(event);
+        input.onEvent?.(event);
+        if (event.type === "text_delta" || event.type === "audio_transcript_delta") text += event.text;
+        if (event.type === "done") {
+          text = event.text;
+          audio = event.audio;
+        }
+        if (event.type === "error") throw new Error(event.status.error);
+      }
+    }
+
+    for (const event of consumeVoiceAgentSseEvents<VoiceAgentStreamVoiceTurnEvent>(pending).events) {
+      events.push(event);
+      input.onEvent?.(event);
+      if (event.type === "text_delta" || event.type === "audio_transcript_delta") text += event.text;
+      if (event.type === "done") {
+        text = event.text;
+        audio = event.audio;
+      }
+      if (event.type === "error") throw new Error(event.status.error);
+    }
+
+    return {
+      status: doneVoiceStreamStatus(startedAt),
+      text,
+      audio,
+      request,
+      events
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const errorEvent: VoiceAgentStreamVoiceTurnEvent = { type: "error", status: errorVoiceStreamStatus(startedAt, message) };
+    if (!events.some((event) => event.type === "error")) {
+      events.push(errorEvent);
+      input.onEvent?.(errorEvent);
+    }
+    return {
+      status: errorVoiceStreamStatus(startedAt, message),
+      text,
+      audio,
+      request: request || {
+        audioBase64: "[not built]",
+        audioFormat: input.audio.type || "",
+        textUserChat: input.textUserChat,
+        history5LastTextChats: input.history5LastTextChats
+      },
       events
     };
   }
@@ -585,6 +774,7 @@ export async function VOICE_AGENT_SERVER_STREAM_TEXT_CHAT(config: ServerAiConfig
       topic: settings.topic,
       keywordOn: settings.keywordOn,
       keywordOff: settings.keywordOff,
+      allowFreeChat: settings.allowFreeChat,
       voice: settings.voice
     }
   };
@@ -641,6 +831,126 @@ export async function VOICE_AGENT_SERVER_STREAM_TEXT_CHAT(config: ServerAiConfig
   });
 }
 
+export async function VOICE_AGENT_SERVER_STREAM_VOICE_TURN(config: ServerAiConfig, body: VoiceAgentServerAnalyseRequest): Promise<Response> {
+  const startedAt = new Date().toISOString();
+  const settings = VOICE_AGENT_CREATE_SERVER_SETTINGS(body);
+  const systemPrompt = [
+    "You are VOICE_AGENT_STREAM_VOICE_TURN, the fast user-facing voice turn method.",
+    "You receive original user audio, optional text chat, topic settings, and recent history.",
+    "The audio is already attached. Never ask the user to provide or upload audio.",
+    "Return user-facing answer text and spoken audio through the stream.",
+    "Do not return JSON, markdown, field names, flags, debug text, or internal analysis.",
+    "Keep the answer short and natural.",
+    "For practice utterances, correct or confirm the user's latest sentence.",
+    "If there is a concrete mistake, give the corrected sentence and one short hint.",
+    "If the sentence is correct, say it is correct and optionally give one tiny hint.",
+    settings.allowFreeChat
+      ? "Free chat is enabled: answer normal questions naturally, but still correct practice phrases first."
+      : "Free chat is disabled: do not greet, start small talk, or continue open conversation. Only correct, confirm, or give one short hint.",
+    body.additionalInstructions || ""
+  ].filter(Boolean).join("\n");
+  const taskPrompt = [
+    `Target language: ${settings.languageName}.`,
+    `Topic/context: ${settings.topic}.`,
+    `Keyword ON exact word/phrase: ${settings.keywordOn}.`,
+    `Keyword OFF exact word/phrase: ${settings.keywordOff}.`,
+    `TEXT USER CHAT: ${body.textUserChat || ""}`,
+    `HISTORY 5 LAST TEXT CHATS: ${JSON.stringify(VOICE_AGENT_NORMALIZE_HISTORY(body.history5LastTextChats))}`,
+    "Answer the current audio turn only.",
+    "Use audio when it helps, but do not turn every answer into pronunciation analysis.",
+    "This streaming method does not produce structured JSON flags. Use AUDIO_ANALYSER for structured correction flags."
+  ].join("\n");
+  const inputForDebug: Omit<VoiceAgentServerAnalyseRequest, "audioBase64"> & { audioBase64: string } = {
+    ...body,
+    audioBase64: `[base64 length=${String(body.audioBase64 || "").length}]`,
+    settings: {
+      languageName: settings.languageName,
+      topicId: settings.topicId,
+      topic: settings.topic,
+      keywordOn: settings.keywordOn,
+      keywordOff: settings.keywordOff,
+      allowFreeChat: settings.allowFreeChat,
+      voice: settings.voice
+    }
+  };
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      const audioChunks: string[] = [];
+      let finalText = "";
+      const send = (event: VoiceAgentStreamVoiceTurnEvent) => controller.enqueue(encoder.encode(formatVoiceAgentSseEvent(event)));
+      try {
+        if (!body.audioBase64) throw new Error("VOICE_AGENT_STREAM_VOICE_TURN requires original audio.");
+        if (!config.openAiApiKey) throw new Error("OPENAI_API_KEY is not configured.");
+        send({
+          type: "start",
+          status: { method: "VOICE_AGENT_STREAM_VOICE_TURN", ok: true, phase: "streaming", startedAt },
+          debug: {
+            input: inputForDebug,
+            promptSent: { systemPrompt, taskPrompt, responseJsonFormat: "none - streaming user-facing text/audio, not JSON" },
+            playbackNote: "Audio chunks are real provider stream chunks. This debug page assembles them and plays the final audio after stream completion."
+          }
+        });
+        const provider = await STREAM_AUDIO_TO_AI_TEXT_AND_AUDIO(
+          { openAiApiKey: config.openAiApiKey },
+          {
+            model: config.audioModel,
+            audioBase64: String(body.audioBase64),
+            audioFormat: body.audioFormat || "wav",
+            voice: settings.voice,
+            prompt: [systemPrompt, "", "TASK INPUT:", taskPrompt].join("\n")
+          }
+        );
+        send({ type: "provider_start", model: provider.model, providerRequest: provider.providerRequest });
+        const reader = provider.stream.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value.type === "text_delta") {
+            finalText += value.text;
+            send({ type: "text_delta", streamEventType: "append_delta", text: value.text });
+          }
+          if (value.type === "audio_transcript_delta") {
+            finalText += value.text;
+            send({ type: "audio_transcript_delta", streamEventType: "append_delta", text: value.text });
+          }
+          if (value.type === "audio_delta") {
+            audioChunks.push(value.audioBase64);
+            send({
+              type: "audio_delta",
+              audioBase64: value.audioBase64,
+              audioFormat: value.audioFormat,
+              byteLength: base64ByteLength(value.audioBase64)
+            });
+          }
+        }
+        send({
+          type: "done",
+          status: doneVoiceStreamStatus(startedAt),
+          text: finalText.trim(),
+          audio: audioChunks.length ? { audioBase64: pcm16ChunksToWavBase64(audioChunks, 24000), audioFormat: "wav", chunkCount: audioChunks.length } : null
+        });
+      } catch (error) {
+        send({
+          type: "error",
+          status: errorVoiceStreamStatus(startedAt, error instanceof Error ? error.message : String(error))
+        });
+      } finally {
+        controller.close();
+      }
+    }
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-store"
+    }
+  });
+}
+
 export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body: VoiceAgentTextChatRequest): Promise<VoiceAgentTextChatOutput> {
   const startedAt = new Date().toISOString();
   const settings = VOICE_AGENT_CREATE_SERVER_SETTINGS(body);
@@ -662,7 +972,10 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
     `Keyword OFF exact word/phrase: ${settings.keywordOff}.`,
     "LATEST USER MESSAGE is the only message to answer.",
     "HISTORY 5 LAST TEXT CHATS is context only and must not become the answer target.",
-    "If the typed message is a normal chat message, answer it normally.",
+    settings.allowFreeChat
+      ? "Free chat is enabled: answer normal typed questions naturally, but correct practice sentences first."
+      : "Free chat is disabled: do not continue open conversation. For typed input, correct, confirm, or give one short hint for the latest practice sentence.",
+    "If the typed message is a target-language practice sentence, check for correction before casual chat.",
     "If the typed message has a useful language mistake, set has_corrections true and explain briefly.",
     "In text-chat mode, correction_type may be grammar, vocabulary, meaning, or none. Do not use pronunciation/accent.",
     "Set is_chat_answer_or_correction to chat_answer for a normal answer, correction for correction feedback, or none only for unusable input.",
@@ -682,6 +995,7 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
       topic: settings.topic,
       keywordOn: settings.keywordOn,
       keywordOff: settings.keywordOff,
+      allowFreeChat: settings.allowFreeChat,
       voice: settings.voice
     }
   };
@@ -758,7 +1072,8 @@ export function VOICE_AGENT_CREATE_SERVER_SETTINGS(body: VoiceAgentServerAnalyse
     languageName: incoming.languageName || base.languageName,
     topic: incoming.topic || base.topic,
     keywordOn: incoming.keywordOn || incoming.keyword || base.keywordOn,
-    keywordOff: incoming.keywordOff || base.keywordOff
+    keywordOff: incoming.keywordOff || base.keywordOff,
+    allowFreeChat: typeof incoming.allowFreeChat === "boolean" ? incoming.allowFreeChat : base.allowFreeChat
   };
   const promptConfig = body.promptConfig || {};
   if (body.systemPrompt || promptConfig.systemTask || promptConfig.howToRespond || promptConfig.responseJsonFormat) {
@@ -782,6 +1097,7 @@ export const VOICE_AGENT_FRONTEND = {
   ANALYSE_AUDIO: VOICE_AGENT_ANALYSE_AUDIO,
   SEND_TEXT_CHAT: VOICE_AGENT_SEND_TEXT_CHAT,
   STREAM_TEXT_CHAT: VOICE_AGENT_STREAM_TEXT_CHAT,
+  STREAM_VOICE_TURN: VOICE_AGENT_STREAM_VOICE_TURN,
   PLAY_AUDIO: VOICE_AGENT_PLAY_AUDIO,
   CREATE_PROMPTS: VOICE_AGENT_CREATE_PROMPTS,
   CREATE_SETTINGS: VOICE_AGENT_CREATE_SETTINGS
@@ -791,6 +1107,7 @@ export const VOICE_AGENT_BACKEND = {
   ANALYSE_AUDIO: VOICE_AGENT_SERVER_ANALYSE_AUDIO,
   TEXT_CHAT: VOICE_AGENT_SERVER_TEXT_CHAT,
   STREAM_TEXT_CHAT: VOICE_AGENT_SERVER_STREAM_TEXT_CHAT,
+  STREAM_VOICE_TURN: VOICE_AGENT_SERVER_STREAM_VOICE_TURN,
   CREATE_PROMPTS: VOICE_AGENT_CREATE_PROMPTS,
   CREATE_SETTINGS: VOICE_AGENT_CREATE_SETTINGS,
   CREATE_SERVER_SETTINGS: VOICE_AGENT_CREATE_SERVER_SETTINGS,
@@ -869,7 +1186,9 @@ function fallbackTextChatAnswer(textUserChat: string, settings: VoiceAgentSettin
   const text = textUserChat.trim();
   if (!text) return "Please type a message.";
   if (settings.topicId === "french_for_german") {
-    return `I can help with this French sentence: "${text}".`;
+    return settings.allowFreeChat
+      ? `I can help with this French sentence: "${text}".`
+      : `Phrase reçue : "${text}". Je dois la corriger ou confirmer.`;
   }
   if (settings.topicId === "history") {
     return `Let's discuss this history question: "${text}".`;
@@ -944,6 +1263,14 @@ function errorStreamStatus(startedAt: string, error: string) {
   return { method: "VOICE_AGENT_STREAM_TEXT_CHAT" as const, ok: false as const, phase: "error" as const, startedAt, finishedAt: new Date().toISOString(), error };
 }
 
+function doneVoiceStreamStatus(startedAt: string) {
+  return { method: "VOICE_AGENT_STREAM_VOICE_TURN" as const, ok: true as const, phase: "done" as const, startedAt, finishedAt: new Date().toISOString() };
+}
+
+function errorVoiceStreamStatus(startedAt: string, error: string) {
+  return { method: "VOICE_AGENT_STREAM_VOICE_TURN" as const, ok: false as const, phase: "error" as const, startedAt, finishedAt: new Date().toISOString(), error };
+}
+
 function createStreamTextChatPrompt(settings: VoiceAgentSettings, body: VoiceAgentTextChatRequest): VoiceAgentStreamPrompt {
   return {
     systemPrompt: [
@@ -974,11 +1301,11 @@ function createStreamTextChatPrompt(settings: VoiceAgentSettings, body: VoiceAge
   };
 }
 
-function formatVoiceAgentSseEvent(event: VoiceAgentStreamTextChatEvent) {
+function formatVoiceAgentSseEvent(event: VoiceAgentStreamTextChatEvent | VoiceAgentStreamVoiceTurnEvent) {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
-function consumeVoiceAgentSseEvents(text: string) {
+function consumeVoiceAgentSseEvents<T extends VoiceAgentStreamTextChatEvent | VoiceAgentStreamVoiceTurnEvent>(text: string) {
   const parts = text.split("\n\n");
   const remaining = parts.pop() || "";
   const events = parts
@@ -987,13 +1314,81 @@ function consumeVoiceAgentSseEvents(text: string) {
     .map((part) => part.startsWith("data:") ? part.slice(5).trim() : part)
     .map((jsonText) => {
       try {
-        return JSON.parse(jsonText) as VoiceAgentStreamTextChatEvent;
+        return JSON.parse(jsonText) as T;
       } catch {
         return null;
       }
     })
-    .filter((event): event is VoiceAgentStreamTextChatEvent => Boolean(event));
+    .filter((event): event is T => Boolean(event));
   return { events, remaining };
+}
+
+function base64ByteLength(value: string) {
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((value.length * 3) / 4) - padding);
+}
+
+function concatBase64Chunks(chunks: string[]) {
+  const byteArrays = chunks.map(base64ToUint8Array);
+  const totalLength = byteArrays.reduce((sum, bytes) => sum + bytes.length, 0);
+  const allBytes = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const bytes of byteArrays) {
+    allBytes.set(bytes, offset);
+    offset += bytes.length;
+  }
+  return uint8ArrayToBase64(allBytes);
+}
+
+function pcm16ChunksToWavBase64(chunks: string[], sampleRate: number) {
+  const pcmChunks = chunks.map(base64ToUint8Array);
+  const dataLength = pcmChunks.reduce((sum, bytes) => sum + bytes.length, 0);
+  const wav = new Uint8Array(44 + dataLength);
+  const view = new DataView(wav.buffer);
+  writeAsciiBytes(wav, 0, "RIFF");
+  view.setUint32(4, 36 + dataLength, true);
+  writeAsciiBytes(wav, 8, "WAVE");
+  writeAsciiBytes(wav, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAsciiBytes(wav, 36, "data");
+  view.setUint32(40, dataLength, true);
+  let offset = 44;
+  for (const bytes of pcmChunks) {
+    wav.set(bytes, offset);
+    offset += bytes.length;
+  }
+  return uint8ArrayToBase64(wav);
+}
+
+function writeAsciiBytes(bytes: Uint8Array, offset: number, text: string) {
+  for (let index = 0; index < text.length; index += 1) bytes[offset + index] = text.charCodeAt(index);
+}
+
+function base64ToUint8Array(value: string) {
+  if (typeof atob === "function") {
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+    return bytes;
+  }
+  const bufferCtor = (globalThis as unknown as { Buffer?: { from: (value: string, encoding: string) => Uint8Array } }).Buffer;
+  if (bufferCtor) return new Uint8Array(bufferCtor.from(value, "base64"));
+  throw new Error("Base64 decoding is unavailable.");
+}
+
+function uint8ArrayToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index]);
+  if (typeof btoa === "function") return btoa(binary);
+  const bufferCtor = (globalThis as unknown as { Buffer?: { from: (bytes: Uint8Array) => { toString: (encoding: string) => string } } }).Buffer;
+  if (bufferCtor) return bufferCtor.from(bytes).toString("base64");
+  throw new Error("Base64 encoding is unavailable.");
 }
 
 function contentTypeToAudioFormat(contentType: string) {

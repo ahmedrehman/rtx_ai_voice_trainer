@@ -6,5 +6,6 @@ test("VOICE_AGENT_CREATE_SETTINGS defaults to French for German", () => {
   const settings = VOICE_AGENT_CREATE_SETTINGS("french_for_german");
   assert.equal(settings.topicId, "french_for_german");
   assert.equal(settings.languageName, "French");
+  assert.equal(settings.allowFreeChat, false);
   assert.match(settings.topic, /French/i);
 });

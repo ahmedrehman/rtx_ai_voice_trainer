@@ -1,8 +1,10 @@
 import React, { useState } from "react";
 import {
   VOICE_AGENT_CREATE_PROMPTS,
+  VOICE_AGENT_SAMPLE_AUDIO_URL,
   VOICE_AGENT_SEND_TEXT_CHAT,
   VOICE_AGENT_STREAM_TEXT_CHAT,
+  VOICE_AGENT_STREAM_VOICE_TURN,
   type VoiceAgentSettings
 } from "../voice_agent";
 
@@ -31,6 +33,7 @@ export function VoiceAgentFrontendTestPage({
   if (pageId === "APP_FULL_TEST") return renderFullAppTest ? <>{renderFullAppTest()}</> : null;
   if (pageId === "VOICE_AGENT_TEXT_CHAT_TEST") return <VoiceAgentTextChatTestPage settings={settings} />;
   if (pageId === "VOICE_AGENT_STREAM_TEXT_CHAT_TEST") return <VoiceAgentStreamTextChatTestPage settings={settings} />;
+  if (pageId === "VOICE_AGENT_STREAM_VOICE_TURN_TEST") return <VoiceAgentStreamVoiceTurnTestPage settings={settings} />;
   return null;
 }
 
@@ -198,6 +201,157 @@ function VoiceAgentStreamTextChatTestPage({ settings }: { settings: VoiceAgentSe
       {stack.length === 0 ? <p>No streaming text-only test run yet.</p> : stack.map((item) => <StackArticle item={item} key={item.id} />)}
     </section>
   );
+}
+
+function VoiceAgentStreamVoiceTurnTestPage({ settings }: { settings: VoiceAgentSettings }) {
+  const [textUserChat, setTextUserChat] = useState("");
+  const [historyText, setHistoryText] = useState("[]");
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [streamText, setStreamText] = useState("");
+  const [audioChunkCount, setAudioChunkCount] = useState(0);
+  const [audioByteCount, setAudioByteCount] = useState(0);
+  const [finalAudioUrl, setFinalAudioUrl] = useState("");
+  const [running, setRunning] = useState(false);
+  const prompts = VOICE_AGENT_CREATE_PROMPTS(settings);
+  const { stack, pushStack, updateStack } = useDebugStack();
+
+  async function runStreamVoiceTurnTest() {
+    const history = safeJsonArray(historyText);
+    const audio = audioFile || await loadDefaultSampleAudio();
+    const input = {
+      endpoint: "/api/voice-agent/voice-turn-stream",
+      methodId: "VOICE_AGENT_STREAM_VOICE_TURN",
+      settings,
+      audio: { source: audioFile ? "uploaded file" : VOICE_AGENT_SAMPLE_AUDIO_URL, size: audio.size, type: audio.type },
+      textUserChat,
+      history5LastTextChats: history,
+      promptConfig: prompts,
+      playbackTruth: "Provider audio_delta chunks are received during the stream. This page assembles them and plays final audio after done."
+    };
+    setStreamText("");
+    setAudioChunkCount(0);
+    setAudioByteCount(0);
+    if (finalAudioUrl) URL.revokeObjectURL(finalAudioUrl);
+    setFinalAudioUrl("");
+    const id = pushStack({
+      type: "VOICE_AGENT_STREAM_VOICE_TURN",
+      status: "running",
+      input,
+      steps: [
+        { label: "Collect user audio", state: "done", detail: audioFile ? "Using uploaded audio file." : "Using default sample audio file." },
+        { label: "Call stream endpoint", state: "running", detail: "POST /api/voice-agent/voice-turn-stream." },
+        { label: "Read provider stream", state: "pending", detail: "Waiting for provider_start, text_delta, audio_delta, and done events." },
+        { label: "Play audio", state: "pending", detail: "Audio chunks will be assembled and played after done. Chunk-by-chunk browser playback is not implemented in this page." }
+      ]
+    });
+    setRunning(true);
+    try {
+      const result = await VOICE_AGENT_STREAM_VOICE_TURN({
+        settings,
+        audio,
+        textUserChat,
+        history5LastTextChats: history,
+        onEvent: (event) => {
+          if (event.type === "text_delta" || event.type === "audio_transcript_delta") {
+            setStreamText((current) => `${current}${event.text}`);
+          }
+          if (event.type === "audio_delta") {
+            setAudioChunkCount((current) => current + 1);
+            setAudioByteCount((current) => current + event.byteLength);
+          }
+          if (event.type === "done") {
+            setStreamText(event.text);
+            if (event.audio) {
+              const url = URL.createObjectURL(base64ToBlob(event.audio.audioBase64, event.audio.audioFormat));
+              setFinalAudioUrl(url);
+            }
+          }
+        }
+      });
+      updateStack(id, {
+        status: result.status.ok ? "ok" : "error",
+        steps: [
+          { label: "Collect user audio", state: "done", detail: audioFile ? "Uploaded audio was used." : "Default sample audio was used." },
+          { label: "Call stream endpoint", state: result.events.some((event) => event.type === "start") ? "done" : "error", detail: result.events.some((event) => event.type === "start") ? "Server accepted stream request." : "No start event received." },
+          { label: "Provider stream started", state: result.events.some((event) => event.type === "provider_start") ? "done" : "error", detail: result.events.some((event) => event.type === "provider_start") ? "Provider streaming call started." : "No provider_start event received." },
+          { label: `Text stream: ${result.text ? "YES" : "NO"}`, state: result.text ? "done" : result.status.ok ? "done" : "error", detail: result.text ? `Received ${result.text.length} final characters.` : "No text delta/final text received." },
+          { label: `Audio chunks: ${result.audio?.chunkCount || 0}`, state: result.audio ? "done" : result.status.ok ? "not_implemented" : "error", detail: result.audio ? "Audio chunks were assembled into final playback audio." : "No audio_delta chunks were returned." },
+          { label: "Play audio", state: result.audio ? "done" : "not_implemented", detail: result.audio ? "Final assembled audio is available in the audio player." : "Nothing to play." }
+        ],
+        output: summarizeStreamVoiceResult(result),
+        error: result.status.error
+      });
+    } catch (error) {
+      updateStack(id, {
+        status: "error",
+        steps: [{ label: "Run streaming voice turn test", state: "error", detail: error instanceof Error ? error.message : String(error) }],
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <section className="debug-method">
+      <div className="debug-grid">
+        <section className="method-panel">
+          <h2>Inputs</h2>
+          <label className="field"><span>audio file</span><input type="file" accept="audio/*" onChange={(event) => setAudioFile(event.target.files?.[0] || null)} /><small>Default sample is used when empty: {VOICE_AGENT_SAMPLE_AUDIO_URL}</small></label>
+          {audioFile && <button className="secondary-button" type="button" onClick={() => setAudioFile(null)}>Remove selected audio</button>}
+          <label className="field"><span>textUserChat</span><textarea value={textUserChat} onChange={(event) => setTextUserChat(event.target.value)} rows={3} /><small>Optional typed context for the same voice turn.</small></label>
+          <label className="field"><span>history5LastTextChats</span><textarea value={historyText} onChange={(event) => setHistoryText(event.target.value)} rows={4} /><small>JSON array, context only.</small></label>
+          <button className="run-button" type="button" onClick={() => void runStreamVoiceTurnTest()} disabled={running}>{running ? "Streaming..." : "Run streaming voice turn"}</button>
+        </section>
+        <section className="method-panel">
+          <h2>Prompt Inputs</h2>
+          <label className="field"><span>systemPrompt</span><textarea value={prompts.systemPrompt} readOnly rows={5} /></label>
+          <label className="field"><span>task</span><textarea value={prompts.task} readOnly rows={8} /></label>
+          <label className="field"><span>howToRespond</span><textarea value={prompts.howToRespond} readOnly rows={5} /></label>
+          <small>This streaming voice method returns user-facing text/audio events, not structured JSON flags.</small>
+        </section>
+      </div>
+      <section className="method-panel">
+        <h2>Live Stream</h2>
+        <div className="chat-window compact">{streamText || "No text delta yet."}</div>
+        <p>Audio chunks received: {audioChunkCount} / bytes: {audioByteCount}</p>
+        {finalAudioUrl ? <audio controls src={finalAudioUrl} /> : <p>No final assembled audio yet.</p>}
+      </section>
+      {stack.length === 0 ? <p>No streaming voice turn test run yet.</p> : stack.map((item) => <StackArticle item={item} key={item.id} />)}
+    </section>
+  );
+}
+
+async function loadDefaultSampleAudio() {
+  const response = await fetch(VOICE_AGENT_SAMPLE_AUDIO_URL);
+  if (!response.ok) throw new Error(`Default sample audio failed to load: ${response.status}`);
+  const blob = await response.blob();
+  return new File([blob], "sample-voice-test.wav", { type: blob.type || "audio/wav" });
+}
+
+function summarizeStreamVoiceResult(result: Awaited<ReturnType<typeof VOICE_AGENT_STREAM_VOICE_TURN>>) {
+  return {
+    status: result.status,
+    text: result.text,
+    audio: result.audio ? {
+      audioBase64: `[base64 length=${result.audio.audioBase64.length}]`,
+      audioFormat: result.audio.audioFormat,
+      chunkCount: result.audio.chunkCount
+    } : null,
+    request: result.request,
+    events: result.events.map((event) => event.type === "audio_delta"
+      ? { ...event, audioBase64: `[base64 length=${event.audioBase64.length}]` }
+      : event.type === "done" && event.audio
+        ? { ...event, audio: { ...event.audio, audioBase64: `[base64 length=${event.audio.audioBase64.length}]` } }
+        : event)
+  };
+}
+
+function base64ToBlob(base64: string, audioFormat: string) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: audioFormat === "wav" ? "audio/wav" : "audio/mpeg" });
 }
 
 function isVoiceAgentTextChatResponse(value: unknown): value is { json: { flags: { has_corrections: boolean; correction_type: string }; chat_text_to_user: string } } {

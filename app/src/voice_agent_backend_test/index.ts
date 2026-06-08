@@ -13,6 +13,8 @@ export const VOICE_AGENT_BACKEND_TEST_MODULE = {
     "text_chat_real_keyword_off.test.ts",
     "stream_text_chat_missing_typed_text.test.ts",
     "stream_text_chat_missing_openai_config.test.ts",
-    "stream_text_chat_real_answer.test.ts"
+    "stream_text_chat_real_answer.test.ts",
+    "stream_voice_turn_missing_openai_config.test.ts",
+    "stream_voice_turn_real.test.ts"
   ]
 } as const;

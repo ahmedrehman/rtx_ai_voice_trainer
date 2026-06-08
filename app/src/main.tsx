@@ -46,7 +46,7 @@ type StackItem = {
   status: "running" | "ok" | "error";
   createdAt: string;
   business?: unknown;
-  steps?: Array<{ label: string; state: "pending" | "running" | "done" | "error" | "not_implemented"; detail: string }>;
+  steps?: Array<{ label: string; state: "pending" | "running" | "done" | "error" | "not_implemented" | "skipped"; detail: string }>;
   input?: unknown;
   output?: unknown;
   error?: unknown;
@@ -244,9 +244,7 @@ function AppVoiceExperience({
   settings: VoiceAgentSettings;
   setSettings: React.Dispatch<React.SetStateAction<VoiceAgentSettings>>;
 }) {
-  const [messages, setMessages] = useState<VoiceAgentChatMessage[]>([
-    { id: createId(), role: "assistant", text: `${settings.languageName} practice is ready.`, createdAt: new Date().toISOString() }
-  ]);
+  const [messages, setMessages] = useState<VoiceAgentChatMessage[]>([]);
   const [textUserChat, setTextUserChat] = useState("");
   const [listenEnabled, setListenEnabled] = useState(false);
   const [speakEnabled, setSpeakEnabled] = useState(false);
@@ -254,6 +252,8 @@ function AppVoiceExperience({
   const [lastSignal, setLastSignal] = useState<{ type: "idle" | "improvement" | "error"; text: string }>({ type: "idle", text: "" });
   const [lastAudioUrl, setLastAudioUrl] = useState("");
   const stopListenRef = useRef(false);
+  const listenLoopActiveRef = useRef(false);
+  const listenRunIdRef = useRef(0);
   const speakEnabledRef = useRef(false);
   const speechAbortRef = useRef<AbortController | null>(null);
   const { stack, pushStack, updateStack } = useDebugStack();
@@ -268,13 +268,7 @@ function AppVoiceExperience({
   }, []);
 
   useEffect(() => {
-    const message: VoiceAgentChatMessage = {
-      id: createId(),
-      role: "assistant",
-      text: `${settings.languageName} practice is ready.`,
-      createdAt: new Date().toISOString()
-    };
-    setMessages([message]);
+    setMessages([]);
     setLastSignal({ type: "idle", text: "" });
   }, [settings.topic, settings.languageName]);
 
@@ -348,7 +342,7 @@ function AppVoiceExperience({
     }
   }
 
-  async function analyseAudio(audio: Blob, source: string) {
+  async function analyseAudio(audio: Blob, source: string, options: { listenRunId?: number } = {}) {
     const userText = textUserChat.trim();
     if (userText) {
       const message: VoiceAgentChatMessage = { id: createId(), role: "user", text: userText, createdAt: new Date().toISOString() };
@@ -386,6 +380,21 @@ function AppVoiceExperience({
         history5LastTextChats: messages.slice(-5).map((message) => `${message.role}: ${message.text}`),
         speakEnabled: speakEnabledRef.current
       });
+      const staleListenResult = options.listenRunId !== undefined && options.listenRunId !== listenRunIdRef.current;
+      if (staleListenResult) {
+        updateStack(id, {
+          status: "ok",
+          steps: [
+            { label: "Capture app input", state: "done", detail: "Chat text, audio, topic, and keywords captured from client state." },
+            { label: "Call voice_agent frontend", state: result.status.ok ? "done" : "error", detail: result.status.ok ? "AUDIO_ANALYSER returned, but listen run is no longer current." : String(result.status.error || "AUDIO_ANALYSER failed.") },
+            { label: "Business decision: append to chat? NO", state: "done", detail: "Stale listen result ignored because a newer listen run/stop happened." },
+            { label: "Speak response", state: "done", detail: "Stale listen result is not spoken." }
+          ],
+          output: result,
+          error: result.status.error
+        });
+        return;
+      }
       if (result.chatMessage) setMessages((current) => [...current, result.chatMessage as VoiceAgentChatMessage].slice(-30));
       const resultJson = isAudioAnalyserResponse(result.response) ? result.response.json : null;
       if (result.status.ok && resultJson?.flags.has_corrections) {
@@ -426,9 +435,14 @@ function AppVoiceExperience({
   }
 
   async function startListenLoop() {
+    if (listenLoopActiveRef.current) return;
+    listenLoopActiveRef.current = true;
+    const runId = listenRunIdRef.current + 1;
+    listenRunIdRef.current = runId;
     stopListenRef.current = false;
     setListenEnabled(true);
-    while (!stopListenRef.current) {
+    try {
+    while (!stopListenRef.current && listenRunIdRef.current === runId) {
       const id = pushStack({
         type: "VOICE_AGENT_LISTEN_LOOP",
         status: "running",
@@ -454,7 +468,7 @@ function AppVoiceExperience({
           { label: "Listen toggle", state: "done", detail: stopListenRef.current ? "Listen is stopping." : "Listen is on." },
           { label: "Record chunk", state: chunkResult.chunk.status.ok ? "done" : "error", detail: chunkResult.chunk.status.ok ? "Audio chunk recorded." : String(chunkResult.chunk.status.error || "Chunk failed.") },
           { label: `Decide useful chunk: ${chunkResult.useful ? "YES" : "NO"}`, state: chunkResult.chunk.status.ok ? "done" : "error", detail: chunkResult.reason },
-          { label: "Send to AUDIO_ANALYSER", state: chunkResult.useful ? "done" : "done", detail: chunkResult.useful ? "Chunk will be sent." : "Chunk skipped." }
+          { label: "Send to AUDIO_ANALYSER", state: chunkResult.useful ? "done" : "skipped", detail: chunkResult.useful ? "Chunk was sent." : "NOT SENT. Chunk skipped because it was not useful." }
         ],
         output: {
           status: chunkResult.chunk.status,
@@ -466,16 +480,23 @@ function AppVoiceExperience({
         },
         error: chunkResult.chunk.status.error
       });
-      if (chunkResult.useful && chunkResult.chunk.audio) await analyseAudio(chunkResult.chunk.audio, "microphone chunk");
+      if (chunkResult.useful && chunkResult.chunk.audio && listenRunIdRef.current === runId) {
+        await analyseAudio(chunkResult.chunk.audio, "microphone chunk", { listenRunId: runId });
+      }
       await wait(150);
     }
-    setListenEnabled(false);
+    } finally {
+      if (listenRunIdRef.current === runId) setListenEnabled(false);
+      listenLoopActiveRef.current = false;
+    }
   }
 
   function toggleListen() {
     if (listenEnabled) {
       stopListenRef.current = true;
+      listenRunIdRef.current += 1;
       setListenEnabled(false);
+      stopSpeakingNow();
       return;
     }
     void startListenLoop();
@@ -532,9 +553,13 @@ function AppVoiceExperience({
             <Volume2 size={17} />
             <span>{speakEnabled ? "Speak on" : "Speak off"}</span>
           </button>
+          <button className={settings.allowFreeChat ? "toggle active" : "toggle"} type="button" onClick={() => setSettings((current) => ({ ...current, allowFreeChat: !current.allowFreeChat, prompts: undefined }))}>
+            <span>{settings.allowFreeChat ? "Free chat on" : "Free chat off"}</span>
+          </button>
           {debug && <span className="topic-pill">{settings.topic}</span>}
           {debug && <span className="topic-pill">on: {settings.keywordOn}</span>}
           {debug && <span className="topic-pill">off: {settings.keywordOff}</span>}
+          {debug && <span className="topic-pill">free chat: {settings.allowFreeChat ? "on" : "off"}</span>}
           <span className="signal-lamp-wrap" aria-live="polite">
             <span className={`signal-lamp ${lastSignal.type}`} title={lastSignal.text || "No issue"} />
           </span>
@@ -629,6 +654,7 @@ function VoiceAgentConfigPage({
           <label className="field"><span>languageName</span><input value={settings.languageName} onChange={(event) => setSettings((current) => ({ ...current, languageName: event.target.value }))} /><small>Language/topic hint sent with voice_agent settings.</small></label>
           <label className="field"><span>keywordOn</span><input value={settings.keywordOn} onChange={(event) => setSettings((current) => ({ ...current, keywordOn: event.target.value, prompts: undefined }))} /><small>Exact keyword to start/respond.</small></label>
           <label className="field"><span>keywordOff</span><input value={settings.keywordOff} onChange={(event) => setSettings((current) => ({ ...current, keywordOff: event.target.value, prompts: undefined }))} /><small>Exact keyword to stop/silence.</small></label>
+          <label className="check-row"><input type="checkbox" checked={settings.allowFreeChat} onChange={(event) => setSettings((current) => ({ ...current, allowFreeChat: event.target.checked, prompts: undefined }))} /> <span>allow free chat</span></label>
           <label className="field"><span>voice</span><input value={settings.voice} onChange={(event) => setSettings((current) => ({ ...current, voice: event.target.value }))} /><small>AI voice name.</small></label>
           <button className="secondary-button" type="button" onClick={() => setSettings((current) => ({ ...current, prompts: undefined }))}>Reset prompts from topic</button>
         </section>

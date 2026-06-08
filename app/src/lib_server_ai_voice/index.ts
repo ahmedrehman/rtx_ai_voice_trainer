@@ -305,7 +305,7 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
     input.systemPrompt.task,
     input.systemPrompt.howToRespond,
     "The original microphone audio is already attached to this request.",
-    "Answer normal chat naturally. Give pronunciation or accent feedback only when there is a concrete useful correction.",
+    "For practice input, correct or confirm the latest user phrase. Answer freely only when the supplied business prompt allows free chat.",
     "Return the text message as JSON only.",
     "Do not put spoken-audio instructions inside the JSON.",
     "Never say you will analyze, process, proceed, wait, hold on, or need microphone audio.",
@@ -314,7 +314,7 @@ export async function AUDIO_ANALYSER(config: ServerAiConfig, input: AudioAnalyse
   const taskPrompt = [
     `TEXT USER CHAT: ${input.textUserChat || ""}`,
     `HISTORY 5 LAST TEXT CHATS: ${JSON.stringify(input.history5LastTextChats)}`,
-    "Use the audio when it helps, but do not turn every chat answer into pronunciation analysis.",
+    "Use the audio when it helps, but do not turn the answer into open small talk.",
     "The server will create spoken audio later from json.chat_text_to_user only."
   ].join("\n");
 

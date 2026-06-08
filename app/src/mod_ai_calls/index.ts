@@ -37,6 +37,11 @@ export type AiAudioTextResult = {
   text: string;
 };
 
+export type AiAudioTurnStreamEvent =
+  | { type: "text_delta"; text: string }
+  | { type: "audio_delta"; audioBase64: string; audioFormat: "pcm16" }
+  | { type: "audio_transcript_delta"; text: string };
+
 export type AiStreamTextRequest = {
   model?: string;
   systemPrompt: string;
@@ -270,6 +275,58 @@ export async function RAW_AUDIO_TO_AI_TEXT_ONLY(config: AiCallConfig, request: A
   throw new Error(lastError || "Audio AI text failed");
 }
 
+export async function STREAM_AUDIO_TO_AI_TEXT_AND_AUDIO(config: AiCallConfig, request: AiAudioTurnRequest): Promise<{
+  model: string;
+  providerRequest: unknown;
+  stream: ReadableStream<AiAudioTurnStreamEvent>;
+}> {
+  const apiKey = requireOpenAiKey(config);
+  if (!request.audioBase64) throw new Error("Audio AI input is empty.");
+  const audioFormat = normalizeInputAudioFormat(request.audioFormat);
+
+  const attempts = request.model ? [request.model] : ["gpt-audio", "gpt-audio-1.5"];
+  let lastError = "";
+
+  for (const model of attempts) {
+    const requestBody = {
+      model,
+      stream: true,
+      modalities: ["text", "audio"],
+      audio: { voice: request.voice || "coral", format: "pcm16" },
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: request.prompt },
+            { type: "input_audio", input_audio: { data: request.audioBase64, format: audioFormat } }
+          ]
+        }
+      ]
+    };
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok || !response.body) {
+      lastError = await response.text().catch(() => "");
+      continue;
+    }
+
+    return {
+      model,
+      providerRequest: withoutFullAudioInProviderRequest(requestBody),
+      stream: openAiSseToAudioTurnEventStream(response.body)
+    };
+  }
+
+  throw new Error(lastError || "OpenAI streaming audio turn failed");
+}
+
 export async function STREAM_TEXT_CHAT_FAST(config: AiCallConfig, request: AiStreamTextRequest): Promise<ReadableStream<Uint8Array>> {
   const apiKey = requireOpenAiKey(config);
   if (!request.userPrompt.trim()) throw new Error("STREAM_TEXT_CHAT_FAST requires userPrompt.");
@@ -295,6 +352,87 @@ export async function STREAM_TEXT_CHAT_FAST(config: AiCallConfig, request: AiStr
   }
 
   return openAiSseToTextStream(response.body);
+}
+
+function openAiSseToAudioTurnEventStream(body: ReadableStream<Uint8Array>) {
+  const decoder = new TextDecoder();
+  const reader = body.getReader();
+  let pending = "";
+  const queued: AiAudioTurnStreamEvent[] = [];
+
+  return new ReadableStream<AiAudioTurnStreamEvent>({
+    async pull(controller) {
+      while (true) {
+        const event = queued.shift();
+        if (event) {
+          controller.enqueue(event);
+          return;
+        }
+
+        const nextLine = readPendingLine();
+        if (nextLine !== null) {
+          const parsed = parseOpenAiAudioStreamLine(nextLine);
+          if (parsed.done) {
+            controller.close();
+            return;
+          }
+          queued.push(...parsed.events);
+          continue;
+        }
+
+        const { done, value } = await reader.read();
+        if (done) {
+          const parsed = parseOpenAiAudioStreamLine(pending);
+          pending = "";
+          queued.push(...parsed.events);
+          const finalEvent = queued.shift();
+          if (finalEvent) controller.enqueue(finalEvent);
+          controller.close();
+          return;
+        }
+        pending += decoder.decode(value, { stream: true });
+      }
+    },
+    cancel() {
+      return reader.cancel();
+    }
+  });
+
+  function readPendingLine() {
+    const newlineIndex = pending.indexOf("\n");
+    if (newlineIndex < 0) return null;
+    const line = pending.slice(0, newlineIndex).trim();
+    pending = pending.slice(newlineIndex + 1);
+    return line;
+  }
+}
+
+function parseOpenAiAudioStreamLine(line: string): { done: boolean; events: AiAudioTurnStreamEvent[] } {
+  if (!line.startsWith("data:")) return { done: false, events: [] };
+  const data = line.slice(5).trim();
+  if (!data) return { done: false, events: [] };
+  if (data === "[DONE]") return { done: true, events: [] };
+  try {
+    const parsed = JSON.parse(data) as {
+      choices?: Array<{
+        delta?: {
+          content?: string;
+          audio?: {
+            data?: string;
+            transcript?: string;
+          };
+        };
+      }>;
+    };
+    const delta = parsed.choices?.[0]?.delta;
+    const events: AiAudioTurnStreamEvent[] = [];
+    if (delta?.content) events.push({ type: "text_delta", text: delta.content });
+    if (delta?.audio?.transcript) events.push({ type: "audio_transcript_delta", text: delta.audio.transcript });
+    if (delta?.audio?.data) events.push({ type: "audio_delta", audioBase64: delta.audio.data, audioFormat: "pcm16" });
+    return { done: false, events };
+  } catch {
+    return { done: false, events: [] };
+  }
 }
 
 function openAiSseToTextStream(body: ReadableStream<Uint8Array>) {
@@ -356,6 +494,13 @@ function parseOpenAiStreamLine(line: string) {
   } catch {
     return "";
   }
+}
+
+function withoutFullAudioInProviderRequest(requestBody: unknown) {
+  return JSON.parse(JSON.stringify(requestBody, (key, value) => {
+    if (key === "data" && typeof value === "string" && value.length > 200) return `[base64 length=${value.length}]`;
+    return value;
+  }));
 }
 
 function normalizeInputAudioFormat(format?: string) {
