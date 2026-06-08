@@ -475,7 +475,7 @@ function AppVoiceExperience({
       const id = pushStack({
         type: "VOICE_AGENT_LISTEN_LOOP",
         status: "running",
-        input: { settings, chunkMs: 5000, keywordOn: settings.keywordOn, keywordOff: settings.keywordOff },
+        input: { settings, maxDurationMs: 8000, mediaChunkMs: 250, speechBoundaryIdleMs: 1200, keywordOn: settings.keywordOn, keywordOff: settings.keywordOff },
         steps: [
           { label: "Listen toggle", state: "done", detail: "Listen is on." },
           { label: "Record chunk", state: "running", detail: "VOICE_AGENT_RECORD_CHUNK is recording microphone audio." },
@@ -484,8 +484,9 @@ function AppVoiceExperience({
         ]
       });
       const chunkResult = await VOICE_AGENT_RECORD_CHUNK({}, {
-        maxDurationMs: 5000,
-        silenceMs: 900,
+        maxDurationMs: 8000,
+        silenceMs: 1200,
+        mediaChunkMs: 250,
         speechCheckLang: settings.languageName === "French" ? "fr-FR" : "en-US",
         chunkDecisionMode: "auto",
         energyThreshold: 0.035,
@@ -514,6 +515,9 @@ function AppVoiceExperience({
           reason: chunkResult.reason,
           audio: chunkResult.chunk.audio ? { size: chunkResult.chunk.audio.size, type: chunkResult.chunk.audio.type } : null,
           browserSpeechText: chunkResult.chunk.browserSpeechText || "",
+          mediaChunkMs: chunkResult.chunk.mediaChunkMs,
+          mediaChunkCount: chunkResult.chunk.mediaChunkCount,
+          browserSpeechFinalDetected: chunkResult.chunk.browserSpeechFinalDetected,
           energyCheck: chunkResult.chunk.energyCheck
         },
         error: chunkResult.chunk.status.error
@@ -745,8 +749,9 @@ function VoiceAgentConfigPage({
 }
 
 function MeaningfulAudioChunkDebug() {
-  const [maxDurationMs, setMaxDurationMs] = useState(5000);
-  const [speechResultIdleMs, setSpeechResultIdleMs] = useState(900);
+  const [maxDurationMs, setMaxDurationMs] = useState(8000);
+  const [speechResultIdleMs, setSpeechResultIdleMs] = useState(1200);
+  const [mediaChunkMs, setMediaChunkMs] = useState(250);
   const [speechCheckLang, setSpeechCheckLang] = useState("fr-FR");
   const [chunkDecisionMode, setChunkDecisionMode] = useState<"auto" | "browser_speech_text" | "audio_energy">("auto");
   const [energyThreshold, setEnergyThreshold] = useState(0.035);
@@ -776,6 +781,7 @@ function MeaningfulAudioChunkDebug() {
     const input = {
       maxDurationMs,
       speechResultIdleMs,
+      mediaChunkMs,
       speechCheckLang,
       chunkDecisionMode,
       energyThreshold,
@@ -827,6 +833,7 @@ function MeaningfulAudioChunkDebug() {
         {
           maxDurationMs,
           silenceMs: speechResultIdleMs,
+          mediaChunkMs,
           speechCheckLang,
           chunkDecisionMode,
           energyThreshold,
@@ -864,10 +871,14 @@ function MeaningfulAudioChunkDebug() {
         this_function_role: "browser microphone chunk recorder plus optional browser speech helper",
         recording_active: runMode === "loop" && !stopRequestedRef.current,
         chunk_duration_target_ms: maxDurationMs,
+        internal_media_chunk_ms: result.mediaChunkMs,
+        internal_media_chunk_count: result.mediaChunkCount,
+        audio_joining_rule: "One MediaRecorder session. Browser emits small internal pieces. Final audio is one Blob joined from those pieces.",
         repeating_chunks_until_stop: runMode === "loop",
         did_check_for_speech: speechCheckerAvailable,
         how_speech_was_checked: speechCheckerAvailable ? "browser SpeechRecognition helper" : "not checked; browser helper unavailable",
         did_find_speech: speechFound,
+        browser_speech_final_detected: result.browserSpeechFinalDetected,
         found_text: result.browserSpeechText || "",
         did_check_audio_energy: result.energyCheck.available,
         audio_energy_found_sound: energyFound,
@@ -934,7 +945,10 @@ function MeaningfulAudioChunkDebug() {
           mimeType: result.mimeType,
           durationMs: result.durationMs,
           chunkReason: result.chunkReason,
-          browserSpeechText: result.browserSpeechText || ""
+          browserSpeechText: result.browserSpeechText || "",
+          mediaChunkMs: result.mediaChunkMs,
+          mediaChunkCount: result.mediaChunkCount,
+          browserSpeechFinalDetected: result.browserSpeechFinalDetected
         },
         error: result.status.error
       });
@@ -981,6 +995,7 @@ function MeaningfulAudioChunkDebug() {
           session={session}
           speechCheckLang={speechCheckLang}
           maxDurationMs={maxDurationMs}
+          mediaChunkMs={mediaChunkMs}
           chunkDecisionMode={chunkDecisionMode}
         />
       </div>
@@ -1000,7 +1015,12 @@ function MeaningfulAudioChunkDebug() {
           <label className="field">
             <span>speechResultIdleMs</span>
             <input type="number" value={speechResultIdleMs} min={200} step={100} onChange={(event) => setSpeechResultIdleMs(Number(event.target.value))} />
-            <small>NOT real silence detection. This waits after the browser SpeechRecognition helper reports a text result.</small>
+            <small>Idle buffer after browser SpeechRecognition reports text/final speech. Recorder stays open during this buffer so the final word is not cut off.</small>
+          </label>
+          <label className="field">
+            <span>mediaChunkMs</span>
+            <input type="number" value={mediaChunkMs} min={100} step={50} onChange={(event) => setMediaChunkMs(Number(event.target.value))} />
+            <small>Internal MediaRecorder slice size. These small pieces are collected from one recorder session and joined into one final audio blob.</small>
           </label>
           <label className="field">
             <span>speechCheckLang</span>
@@ -2184,6 +2204,7 @@ function BusinessTree({
   session,
   speechCheckLang,
   maxDurationMs,
+  mediaChunkMs,
   chunkDecisionMode
 }: {
   latestBusiness?: Record<string, unknown>;
@@ -2191,6 +2212,7 @@ function BusinessTree({
   session: { active: boolean; chunks: number; endedReason: string };
   speechCheckLang: string;
   maxDurationMs: number;
+  mediaChunkMs: number;
   chunkDecisionMode: "auto" | "browser_speech_text" | "audio_energy";
 }) {
   const hasText = Boolean(latestBusiness?.did_find_speech);
@@ -2218,8 +2240,18 @@ function BusinessTree({
           <strong className={session.active ? "state-running" : "state-ended"}>{session.active ? "ACTIVE" : listenerState.toUpperCase()}</strong>
         </summary>
         <div className="tree-children">
-          <p>MEANS RECORDING {maxDurationMs}ms chunks repeating until user clicks Stop.</p>
+          <p>MEANS one continuous recorder session per phrase, max {maxDurationMs}ms, internal pieces every {mediaChunkMs}ms, then one joined audio blob.</p>
           <p>chunks recorded this session: {session.chunks}</p>
+          <details>
+            <summary>JOINED AUDIO RULE</summary>
+            <pre>{JSON.stringify({
+              one_recorder_session: true,
+              repeated_start_stop_recording: false,
+              internal_media_chunk_ms: latestBusiness?.internal_media_chunk_ms || mediaChunkMs,
+              internal_media_chunk_count: latestBusiness?.internal_media_chunk_count || 0,
+              final_audio_blob_joined_from_internal_pieces: true
+            }, null, 2)}</pre>
+          </details>
         </div>
       </details>
 

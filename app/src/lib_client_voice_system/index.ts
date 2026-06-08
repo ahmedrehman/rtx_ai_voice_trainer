@@ -56,6 +56,7 @@ export type SystemMicroToAudioInput = {
 export type SystemMeaningfulAudioChunkInput = {
   maxDurationMs: number;
   silenceMs?: number;
+  mediaChunkMs?: number;
   speechCheckLang?: string;
   mimeType?: string;
   chunkDecisionMode?: "auto" | "browser_speech_text" | "audio_energy";
@@ -103,6 +104,9 @@ export type SystemMeaningfulAudioChunkOutput = {
   durationMs: number;
   chunkReason: "browser_speech_final" | "silence_after_sound" | "max_duration" | "no_speech_checker";
   browserSpeechText?: string;
+  mediaChunkMs: number;
+  mediaChunkCount: number;
+  browserSpeechFinalDetected: boolean;
   energyCheck: SystemAudioEnergyCheckOutput;
 };
 
@@ -211,20 +215,21 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
   const startedAt = new Date().toISOString();
   log(config, "info", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", "start", input);
   const unavailableEnergyCheck = emptyEnergyCheck(input.energyThreshold ?? 0.035, input.minEnergyActiveMs ?? 250);
+  const mediaChunkMs = Math.max(100, input.mediaChunkMs ?? 250);
   if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
     const error = new Error("client microphone API not available");
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
-    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", energyCheck: unavailableEnergyCheck };
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", mediaChunkMs, mediaChunkCount: 0, browserSpeechFinalDetected: false, energyCheck: unavailableEnergyCheck };
   }
   if (typeof MediaRecorder === "undefined") {
     const error = new Error("client MediaRecorder API not available");
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
-    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", energyCheck: unavailableEnergyCheck };
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", mediaChunkMs, mediaChunkCount: 0, browserSpeechFinalDetected: false, energyCheck: unavailableEnergyCheck };
   }
   if (input.mimeType && typeof MediaRecorder.isTypeSupported === "function" && !MediaRecorder.isTypeSupported(input.mimeType)) {
     const error = new Error(`client MediaRecorder MIME type not supported: ${input.mimeType}`);
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
-    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType, durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", energyCheck: unavailableEnergyCheck };
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType, durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", mediaChunkMs, mediaChunkCount: 0, browserSpeechFinalDetected: false, energyCheck: unavailableEnergyCheck };
   }
 
   let stream: MediaStream;
@@ -232,7 +237,7 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
     stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
   } catch (error) {
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error instanceof Error ? error.message : "microphone permission failed");
-    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", energyCheck: unavailableEnergyCheck };
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", mediaChunkMs, mediaChunkCount: 0, browserSpeechFinalDetected: false, energyCheck: unavailableEnergyCheck };
   }
 
   const chunks: Blob[] = [];
@@ -247,12 +252,13 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
     energyCheck.stop();
     stream.getTracks().forEach((track) => track.stop());
     log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error instanceof Error ? error.message : "MediaRecorder creation failed");
-    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", energyCheck: energyCheck.summary() };
+    return { status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: input.mimeType || "", durationMs: 0, chunkReason: "no_speech_checker", browserSpeechText: "", mediaChunkMs, mediaChunkCount: 0, browserSpeechFinalDetected: false, energyCheck: energyCheck.summary() };
   }
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   let recognition: BrowserSpeechRecognition | null = null;
   let browserSpeechText = "";
   let stopReason: SystemMeaningfulAudioChunkOutput["chunkReason"] = Recognition ? "max_duration" : "no_speech_checker";
+  let browserSpeechFinalDetected = false;
   let finished = false;
   let speechCheckerAbortExpected = false;
   let silenceTimer: number | undefined;
@@ -269,6 +275,12 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
     if (recorder.state === "recording") recorder.stop();
   }
 
+  function scheduleStop(reason: SystemMeaningfulAudioChunkOutput["chunkReason"]) {
+    if (finished) return;
+    if (silenceTimer) window.clearTimeout(silenceTimer);
+    silenceTimer = window.setTimeout(() => stop(reason), input.silenceMs || 1200);
+  }
+
   return new Promise((resolve) => {
     recorder.ondataavailable = (event) => {
       if (event.data.size > 0) chunks.push(event.data);
@@ -278,7 +290,7 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
       stream.getTracks().forEach((track) => track.stop());
       const error = new Error("client chunk recording failed");
       log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error.message);
-      resolve({ status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: recorder.mimeType || input.mimeType || "", durationMs: Date.now() - startedMs, chunkReason: stopReason, browserSpeechText, energyCheck: energyCheck.summary() });
+      resolve({ status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: recorder.mimeType || input.mimeType || "", durationMs: Date.now() - startedMs, chunkReason: stopReason, browserSpeechText, mediaChunkMs, mediaChunkCount: chunks.length, browserSpeechFinalDetected, energyCheck: energyCheck.summary() });
     };
     recorder.onstop = () => {
       energyCheck.stop();
@@ -293,6 +305,9 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
         durationMs: Date.now() - startedMs,
         chunkReason: stopReason,
         browserSpeechText,
+        mediaChunkMs,
+        mediaChunkCount: chunks.length,
+        browserSpeechFinalDetected,
         energyCheck: energySummary
       };
       log(config, "info", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", "done", {
@@ -300,18 +315,21 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
         mimeType,
         chunkReason: stopReason,
         browserSpeechText,
+        mediaChunkMs,
+        mediaChunkCount: chunks.length,
+        browserSpeechFinalDetected,
         energyCheck: energySummary
       });
       resolve(output);
     };
 
     try {
-      recorder.start(250);
+      recorder.start(mediaChunkMs);
     } catch (error) {
       energyCheck.stop();
       stream.getTracks().forEach((track) => track.stop());
       log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", error instanceof Error ? error.message : "recording start failed");
-      resolve({ status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: recorder.mimeType || input.mimeType || "", durationMs: Date.now() - startedMs, chunkReason: stopReason, browserSpeechText, energyCheck: energyCheck.summary() });
+      resolve({ status: errorStatus("SYSTEM_MEANINGFUL_AUDIO_CHUNK", startedAt, error), audio: null, mimeType: recorder.mimeType || input.mimeType || "", durationMs: Date.now() - startedMs, chunkReason: stopReason, browserSpeechText, mediaChunkMs, mediaChunkCount: chunks.length, browserSpeechFinalDetected, energyCheck: energyCheck.summary() });
       return;
     }
     energyCheck.start();
@@ -322,15 +340,19 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
         const recognitionInstance = new Recognition();
         recognition = recognitionInstance;
         recognitionInstance.lang = input.speechCheckLang || "fr-FR";
-        recognitionInstance.continuous = false;
+        recognitionInstance.continuous = true;
         recognitionInstance.interimResults = true;
         recognitionInstance.onresult = (event: BrowserSpeechRecognitionEvent) => {
-          for (let index = event.resultIndex; index < event.results.length; index += 1) {
-            browserSpeechText += event.results[index][0].transcript;
-            if (event.results[index].isFinal) stop("browser_speech_final");
+          const transcripts: string[] = [];
+          let sawFinal = false;
+          for (let index = 0; index < event.results.length; index += 1) {
+            const transcript = event.results[index][0].transcript.trim();
+            if (transcript) transcripts.push(transcript);
+            if (event.results[index].isFinal) sawFinal = true;
           }
-          if (silenceTimer) window.clearTimeout(silenceTimer);
-          silenceTimer = window.setTimeout(() => stop("silence_after_sound"), input.silenceMs || 900);
+          browserSpeechText = transcripts.join(" ").trim();
+          if (sawFinal) browserSpeechFinalDetected = true;
+          scheduleStop(sawFinal ? "browser_speech_final" : "silence_after_sound");
         };
         recognitionInstance.onerror = (event: { error: string }) => {
           if (event.error === "aborted" && speechCheckerAbortExpected) {
@@ -338,6 +360,9 @@ export async function SYSTEM_MEANINGFUL_AUDIO_CHUNK(config: ClientVoiceConfig, i
             return;
           }
           log(config, "error", "SYSTEM_MEANINGFUL_AUDIO_CHUNK", `browser speech checker failed: ${event.error}`);
+        };
+        recognitionInstance.onend = () => {
+          if (browserSpeechText.trim()) scheduleStop(browserSpeechFinalDetected ? "browser_speech_final" : "silence_after_sound");
         };
         recognitionInstance.start();
       } catch (error) {
