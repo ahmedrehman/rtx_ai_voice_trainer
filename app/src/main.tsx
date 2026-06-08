@@ -26,6 +26,7 @@ import {
   VOICE_AGENT_CREATE_SETTINGS,
   VOICE_AGENT_PLAY_AUDIO,
   VOICE_AGENT_CORRECTION_TEXT,
+  VOICE_AGENT_DECIDE_LISTEN_SEND,
   VOICE_AGENT_RECORD_CHUNK,
   VOICE_AGENT_SAMPLE_AUDIO_URL,
   VOICE_AGENT_SEND_TEXT_CHAT,
@@ -258,6 +259,8 @@ function AppVoiceExperience({
   const listenRunIdRef = useRef(0);
   const speakEnabledRef = useRef(false);
   const speechAbortRef = useRef<AbortController | null>(null);
+  const speakingRef = useRef(false);
+  const lastAssistantTextRef = useRef("");
   const { stack, pushStack, updateStack } = useDebugStack();
 
   useEffect(() => {
@@ -315,10 +318,14 @@ function AppVoiceExperience({
         speakEnabled
       });
       const assistantMessage = result.chatMessage;
-      if (assistantMessage) setMessages((current) => [...current, assistantMessage].slice(-30));
+      if (assistantMessage) {
+        lastAssistantTextRef.current = assistantMessage.text;
+        setMessages((current) => [...current, assistantMessage].slice(-30));
+      }
       const resultJson = isVoiceAgentTextChatResponse(result.response) ? result.response.json : null;
       if (result.status.ok && resultJson?.flags.has_corrections) {
         setLastCorrectionText(VOICE_AGENT_CORRECTION_TEXT(resultJson));
+        lastAssistantTextRef.current = VOICE_AGENT_CORRECTION_TEXT(resultJson);
         setLastSignal({ type: "improvement", text: `Improvement: ${resultJson.flags.correction_type}` });
       } else if (result.status.ok) {
         setLastCorrectionText("");
@@ -406,10 +413,14 @@ function AppVoiceExperience({
         });
         return;
       }
-      if (result.chatMessage) setMessages((current) => [...current, result.chatMessage as VoiceAgentChatMessage].slice(-30));
+      if (result.chatMessage) {
+        lastAssistantTextRef.current = result.chatMessage.text;
+        setMessages((current) => [...current, result.chatMessage as VoiceAgentChatMessage].slice(-30));
+      }
       const resultJson = isAudioAnalyserResponse(result.response) ? result.response.json : null;
       if (result.status.ok && resultJson?.flags.has_corrections) {
         setLastCorrectionText(VOICE_AGENT_CORRECTION_TEXT(resultJson));
+        lastAssistantTextRef.current = VOICE_AGENT_CORRECTION_TEXT(resultJson);
         setLastSignal({ type: "improvement", text: `Improvement: ${resultJson.flags.correction_type}` });
       } else if (result.status.ok) {
         setLastCorrectionText("");
@@ -475,17 +486,26 @@ function AppVoiceExperience({
         energyThreshold: 0.035,
         minEnergyActiveMs: 250
       });
+      const sendDecision = VOICE_AGENT_DECIDE_LISTEN_SEND({
+        chunkUseful: chunkResult.useful,
+        isSpeaking: speakingRef.current,
+        browserSpeechText: chunkResult.chunk.browserSpeechText || "",
+        lastAssistantText: lastAssistantTextRef.current,
+        lastCorrectionText
+      });
       updateStack(id, {
         status: chunkResult.chunk.status.ok ? "ok" : "error",
         steps: [
           { label: "Listen toggle", state: "done", detail: stopListenRef.current ? "Listen is stopping." : "Listen is on." },
           { label: "Record chunk", state: chunkResult.chunk.status.ok ? "done" : "error", detail: chunkResult.chunk.status.ok ? "Audio chunk recorded." : String(chunkResult.chunk.status.error || "Chunk failed.") },
           { label: `Decide useful chunk: ${chunkResult.useful ? "YES" : "NO"}`, state: chunkResult.chunk.status.ok ? "done" : "error", detail: chunkResult.reason },
-          { label: "Send to AUDIO_ANALYSER", state: chunkResult.useful ? "done" : "skipped", detail: chunkResult.useful ? "Chunk was sent." : "NOT SENT. Chunk skipped because it was not useful." }
+          { label: "Check speaker feedback", state: sendDecision.sendToAi ? "done" : "skipped", detail: sendDecision.reason },
+          { label: "Send to AUDIO_ANALYSER", state: sendDecision.sendToAi ? "done" : "skipped", detail: sendDecision.sendToAi ? "Chunk was sent." : sendDecision.reason }
         ],
         output: {
           status: chunkResult.chunk.status,
           useful: chunkResult.useful,
+          sendDecision,
           reason: chunkResult.reason,
           audio: chunkResult.chunk.audio ? { size: chunkResult.chunk.audio.size, type: chunkResult.chunk.audio.type } : null,
           browserSpeechText: chunkResult.chunk.browserSpeechText || "",
@@ -493,7 +513,7 @@ function AppVoiceExperience({
         },
         error: chunkResult.chunk.status.error
       });
-      if (chunkResult.useful && chunkResult.chunk.audio && listenRunIdRef.current === runId) {
+      if (sendDecision.sendToAi && chunkResult.chunk.audio && listenRunIdRef.current === runId) {
         await analyseAudio(chunkResult.chunk.audio, "microphone chunk", { listenRunId: runId });
       }
       await wait(150);
@@ -516,6 +536,7 @@ function AppVoiceExperience({
   }
 
   function stopSpeakingNow() {
+    speakingRef.current = false;
     speechAbortRef.current?.abort();
     speechAbortRef.current = null;
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
@@ -541,9 +562,11 @@ function AppVoiceExperience({
     stopSpeakingNow();
     const controller = new AbortController();
     speechAbortRef.current = controller;
+    speakingRef.current = true;
     try {
       return await VOICE_AGENT_PLAY_AUDIO({}, audio, { signal: controller.signal });
     } finally {
+      speakingRef.current = false;
       if (speechAbortRef.current === controller) speechAbortRef.current = null;
     }
   }

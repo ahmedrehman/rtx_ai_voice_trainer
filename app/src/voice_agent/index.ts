@@ -282,6 +282,20 @@ export type VoiceAgentChunkResult = {
   reason: string;
 };
 
+export type VoiceAgentListenSendDecisionInput = {
+  chunkUseful: boolean;
+  isSpeaking: boolean;
+  browserSpeechText?: string;
+  lastAssistantText?: string;
+  lastCorrectionText?: string;
+};
+
+export type VoiceAgentListenSendDecision = {
+  sendToAi: boolean;
+  reason: string;
+  code: "send" | "chunk_not_useful" | "app_is_speaking" | "matches_last_assistant" | "matches_last_correction";
+};
+
 export const VOICE_AGENT_DEFAULT_SETTINGS: VoiceAgentSettings = {
   provider: "openai",
   voice: "coral",
@@ -1095,6 +1109,23 @@ export function VOICE_AGENT_NORMALIZE_HISTORY(value: unknown[] | undefined): str
   return (value || []).slice(-5).map((item) => typeof item === "string" ? item : JSON.stringify(item));
 }
 
+export function VOICE_AGENT_DECIDE_LISTEN_SEND(input: VoiceAgentListenSendDecisionInput): VoiceAgentListenSendDecision {
+  if (!input.chunkUseful) {
+    return { sendToAi: false, code: "chunk_not_useful", reason: "NOT SENT. Chunk skipped because it was not useful." };
+  }
+  if (input.isSpeaking) {
+    return { sendToAi: false, code: "app_is_speaking", reason: "NOT SENT. App is speaking, so microphone input may be speaker feedback." };
+  }
+  const heard = normalizeDecisionText(input.browserSpeechText || "");
+  if (heard && heard === normalizeDecisionText(input.lastAssistantText || "")) {
+    return { sendToAi: false, code: "matches_last_assistant", reason: "NOT SENT. Browser speech text matches the last assistant output." };
+  }
+  if (heard && heard === normalizeDecisionText(input.lastCorrectionText || "")) {
+    return { sendToAi: false, code: "matches_last_correction", reason: "NOT SENT. Browser speech text matches the last correction output." };
+  }
+  return { sendToAi: true, code: "send", reason: "SENT. Chunk is useful and does not look like app speaker feedback." };
+}
+
 export function VOICE_AGENT_SHOULD_SURFACE_CHAT(settings: VoiceAgentSettings, json: AudioAnalyserOutput["json"]) {
   return Boolean(settings.allowFreeChat || json.flags.has_corrections);
 }
@@ -1105,6 +1136,7 @@ export function VOICE_AGENT_CORRECTION_TEXT(json: AudioAnalyserOutput["json"]) {
 
 export const VOICE_AGENT_FRONTEND = {
   RECORD_CHUNK: VOICE_AGENT_RECORD_CHUNK,
+  DECIDE_LISTEN_SEND: VOICE_AGENT_DECIDE_LISTEN_SEND,
   ANALYSE_AUDIO: VOICE_AGENT_ANALYSE_AUDIO,
   SEND_TEXT_CHAT: VOICE_AGENT_SEND_TEXT_CHAT,
   STREAM_TEXT_CHAT: VOICE_AGENT_STREAM_TEXT_CHAT,
@@ -1241,6 +1273,17 @@ function detectExactTextKeyword(textUserChat: string, settings: VoiceAgentSettin
 
 function normalizeKeywordText(value: string) {
   return value.toLowerCase().trim().replace(/\s+/g, " ");
+}
+
+function normalizeDecisionText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[’']/g, "'")
+    .replace(/[^a-z0-9'\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function createTextChatSpeech(config: ServerAiConfig, settings: VoiceAgentSettings, text: string) {
