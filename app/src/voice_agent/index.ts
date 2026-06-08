@@ -364,13 +364,21 @@ export function VOICE_AGENT_CREATE_PROMPTS(settings: VoiceAgentSettings) {
       ...basePrompts,
       task: [
         basePrompts.task,
-        "This topic is a French correction trainer for a German learner, not an open free-chat assistant.",
+        settings.allowFreeChat
+          ? "This topic is French learning, but free chat is enabled. Act as a normal helpful assistant for questions and requests."
+          : "This topic is a French correction trainer for a German learner, not an open free-chat assistant.",
         "Focus on mistakes common for German speakers learning French when a correction is actually useful.",
         "For French practice utterances, check correction before casual chat.",
-        "If the user made a concrete French mistake, return a correction result with has_corrections=true.",
-        "If the French phrase is correct, say it is correct briefly and give at most one useful hint.",
+        "A question or request is not automatically a practice utterance.",
         settings.allowFreeChat
-          ? "Free chat is enabled: answer normal user questions naturally, but still correct practice phrases first."
+          ? "If the latest user message is a question or asks for information, answer the question directly. Do not translate unless the user asks for translation."
+          : "If the latest user message is not a practice utterance, stay silent unless there is a correction to make.",
+        "If the user made a concrete French mistake, return a correction result with has_corrections=true.",
+        settings.allowFreeChat
+          ? "If the French phrase is correct but the user asked a real question, answer the question instead of only confirming correctness."
+          : "If the French phrase is correct, say it is correct briefly and give at most one useful hint.",
+        settings.allowFreeChat
+          ? "Free chat is enabled: answer normal user questions naturally. Only correct first when the message is clearly a language practice sentence."
           : "Free chat is disabled: do not start or continue open conversation. Only correct, confirm, or give one short hint for the latest practice input.",
         "Do not greet the user, ask if they are ready, or add unrelated small talk unless free chat is enabled and the latest user message asks for that.",
         "Do not mention pronunciation or accent unless giving a concrete correction."
@@ -1006,8 +1014,10 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
     "LATEST USER MESSAGE is the only message to answer.",
     "HISTORY 5 LAST TEXT CHATS is context only and must not become the answer target.",
     settings.allowFreeChat
-      ? "Free chat is enabled: answer normal typed questions naturally, but correct practice sentences first."
+      ? "Free chat is enabled: answer normal typed questions naturally. Do not translate unless the user asks for translation. Only correct first when the latest message is clearly a practice sentence."
       : "Free chat is disabled: do not continue open conversation. For typed input, correct, confirm, or give one short hint for the latest practice sentence.",
+    "A question or request is not automatically a practice sentence.",
+    "If free chat is enabled and the latest typed message is a question/request, answer it directly and set has_corrections false unless a correction is explicitly useful.",
     "If the typed message is a target-language practice sentence, check for correction before casual chat.",
     "If the typed message has a useful language mistake, set has_corrections true and return only the corrected sentence.",
     "If the typed practice sentence is already correct and free chat is disabled, set has_corrections false and return empty chat_text_to_user, empty text_corrected, and empty hint.",

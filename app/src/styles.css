@@ -372,12 +372,12 @@ p {
 }
 
 .signal-lamp.improvement {
-  border-color: #a01717;
-  background: #d83b3b;
-  box-shadow: 0 0 0 4px #ffe3e3;
+  border-color: #9a6200;
+  background: #f0a51a;
+  box-shadow: 0 0 0 4px #fff3d4;
 }
 
-.signal-lamp.error {
+.signal-lamp.mistake {
   border-color: #a01717;
   background: #d83b3b;
   box-shadow: 0 0 0 4px #ffe3e3;
