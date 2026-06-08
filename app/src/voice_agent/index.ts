@@ -426,7 +426,7 @@ export async function VOICE_AGENT_ANALYSE_AUDIO(input: VoiceAgentAnalyseInput): 
     const data = await response.json().catch(() => ({ error: "Response was not JSON." })) as AudioAnalyserOutput | { error: string };
     const methodOk = response.ok && isAudioAnalyserOutput(data) && data.status.ok;
     const error = isAudioAnalyserOutput(data) ? data.status.error : "error" in data ? data.error : undefined;
-    const chatText = methodOk && isAudioAnalyserOutput(data)
+    const chatText = methodOk && isAudioAnalyserOutput(data) && VOICE_AGENT_SHOULD_SURFACE_CHAT(input.settings, data.json)
       ? data.json.chat_text_to_user || data.json.hint || data.status.error || ""
       : "";
 
@@ -509,7 +509,9 @@ export async function VOICE_AGENT_SEND_TEXT_CHAT(input: VoiceAgentTextChatInput)
     const data = await response.json().catch(() => ({ error: "Response was not JSON." })) as VoiceAgentTextChatOutput | { error: string };
     const ok = response.ok && isVoiceAgentTextChatOutput(data) && data.status.ok;
     const error = isVoiceAgentTextChatOutput(data) ? data.status.error : "error" in data ? data.error : "VOICE_AGENT_TEXT_CHAT failed";
-    const chatText = isVoiceAgentTextChatOutput(data) ? data.json.chat_text_to_user || data.json.hint || "" : error;
+    const chatText = isVoiceAgentTextChatOutput(data) && VOICE_AGENT_SHOULD_SURFACE_CHAT(input.settings, data.json)
+      ? data.json.chat_text_to_user || data.json.hint || ""
+      : isVoiceAgentTextChatOutput(data) ? "" : error;
     return {
       status: {
         method: "VOICE_AGENT_TEXT_CHAT" as const,
@@ -1018,7 +1020,8 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
     );
     const parsed = applyTextKeywordFlags(parseVoiceAgentJson(ai.rawText), body.textUserChat || "", settings);
     const chatText = parsed.chat_text_to_user || parsed.hint || fallbackTextChatAnswer(body.textUserChat || "", settings);
-    const audio = body.speakEnabled
+    const shouldCreateAudio = Boolean(body.speakEnabled && VOICE_AGENT_SHOULD_SURFACE_CHAT(settings, parsed));
+    const audio = shouldCreateAudio
       ? await createTextChatSpeech(config, settings, chatText).catch((error) => ({
           audioBase64: "",
           audioFormat: "",
@@ -1038,7 +1041,7 @@ export async function VOICE_AGENT_SERVER_TEXT_CHAT(config: ServerAiConfig, body:
           responseJsonFormat: prompts.responseJsonFormat
         },
         rawAiText: ai.rawText,
-        spokenAudioText: body.speakEnabled ? chatText : undefined,
+        spokenAudioText: shouldCreateAudio ? chatText : undefined,
         spokenAudioError: audio && "error" in audio ? String(audio.error) : undefined
       }
     };
@@ -1092,6 +1095,14 @@ export function VOICE_AGENT_NORMALIZE_HISTORY(value: unknown[] | undefined): str
   return (value || []).slice(-5).map((item) => typeof item === "string" ? item : JSON.stringify(item));
 }
 
+export function VOICE_AGENT_SHOULD_SURFACE_CHAT(settings: VoiceAgentSettings, json: AudioAnalyserOutput["json"]) {
+  return Boolean(settings.allowFreeChat || json.flags.has_corrections);
+}
+
+export function VOICE_AGENT_CORRECTION_TEXT(json: AudioAnalyserOutput["json"]) {
+  return json.text_corrected.trim() || json.chat_text_to_user.trim() || json.hint.trim();
+}
+
 export const VOICE_AGENT_FRONTEND = {
   RECORD_CHUNK: VOICE_AGENT_RECORD_CHUNK,
   ANALYSE_AUDIO: VOICE_AGENT_ANALYSE_AUDIO,
@@ -1099,6 +1110,8 @@ export const VOICE_AGENT_FRONTEND = {
   STREAM_TEXT_CHAT: VOICE_AGENT_STREAM_TEXT_CHAT,
   STREAM_VOICE_TURN: VOICE_AGENT_STREAM_VOICE_TURN,
   PLAY_AUDIO: VOICE_AGENT_PLAY_AUDIO,
+  SHOULD_SURFACE_CHAT: VOICE_AGENT_SHOULD_SURFACE_CHAT,
+  CORRECTION_TEXT: VOICE_AGENT_CORRECTION_TEXT,
   CREATE_PROMPTS: VOICE_AGENT_CREATE_PROMPTS,
   CREATE_SETTINGS: VOICE_AGENT_CREATE_SETTINGS
 };
@@ -1108,6 +1121,8 @@ export const VOICE_AGENT_BACKEND = {
   TEXT_CHAT: VOICE_AGENT_SERVER_TEXT_CHAT,
   STREAM_TEXT_CHAT: VOICE_AGENT_SERVER_STREAM_TEXT_CHAT,
   STREAM_VOICE_TURN: VOICE_AGENT_SERVER_STREAM_VOICE_TURN,
+  SHOULD_SURFACE_CHAT: VOICE_AGENT_SHOULD_SURFACE_CHAT,
+  CORRECTION_TEXT: VOICE_AGENT_CORRECTION_TEXT,
   CREATE_PROMPTS: VOICE_AGENT_CREATE_PROMPTS,
   CREATE_SETTINGS: VOICE_AGENT_CREATE_SETTINGS,
   CREATE_SERVER_SETTINGS: VOICE_AGENT_CREATE_SERVER_SETTINGS,

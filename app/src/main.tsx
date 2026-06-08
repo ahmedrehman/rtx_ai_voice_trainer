@@ -25,6 +25,7 @@ import {
   VOICE_AGENT_CREATE_PROMPTS,
   VOICE_AGENT_CREATE_SETTINGS,
   VOICE_AGENT_PLAY_AUDIO,
+  VOICE_AGENT_CORRECTION_TEXT,
   VOICE_AGENT_RECORD_CHUNK,
   VOICE_AGENT_SAMPLE_AUDIO_URL,
   VOICE_AGENT_SEND_TEXT_CHAT,
@@ -251,6 +252,7 @@ function AppVoiceExperience({
   const [running, setRunning] = useState(false);
   const [lastSignal, setLastSignal] = useState<{ type: "idle" | "improvement" | "error"; text: string }>({ type: "idle", text: "" });
   const [lastAudioUrl, setLastAudioUrl] = useState("");
+  const [lastCorrectionText, setLastCorrectionText] = useState("");
   const stopListenRef = useRef(false);
   const listenLoopActiveRef = useRef(false);
   const listenRunIdRef = useRef(0);
@@ -260,7 +262,13 @@ function AppVoiceExperience({
 
   useEffect(() => {
     speakEnabledRef.current = speakEnabled;
-    if (!speakEnabled) stopSpeakingNow();
+    if (!speakEnabled) {
+      stopSpeakingNow();
+      return;
+    }
+    if (lastSignal.type === "improvement" && lastCorrectionText) {
+      void speakLastCorrectionOnce(lastCorrectionText);
+    }
   }, [speakEnabled]);
 
   useEffect(() => {
@@ -270,6 +278,7 @@ function AppVoiceExperience({
   useEffect(() => {
     setMessages([]);
     setLastSignal({ type: "idle", text: "" });
+    setLastCorrectionText("");
   }, [settings.topic, settings.languageName]);
 
   async function runWithSampleAudio() {
@@ -309,8 +318,10 @@ function AppVoiceExperience({
       if (assistantMessage) setMessages((current) => [...current, assistantMessage].slice(-30));
       const resultJson = isVoiceAgentTextChatResponse(result.response) ? result.response.json : null;
       if (result.status.ok && resultJson?.flags.has_corrections) {
+        setLastCorrectionText(VOICE_AGENT_CORRECTION_TEXT(resultJson));
         setLastSignal({ type: "improvement", text: `Improvement: ${resultJson.flags.correction_type}` });
       } else if (result.status.ok) {
+        setLastCorrectionText("");
         setLastSignal({ type: "idle", text: "" });
       } else {
         setLastSignal({ type: "error", text: result.status.error || "Text chat failed" });
@@ -398,8 +409,10 @@ function AppVoiceExperience({
       if (result.chatMessage) setMessages((current) => [...current, result.chatMessage as VoiceAgentChatMessage].slice(-30));
       const resultJson = isAudioAnalyserResponse(result.response) ? result.response.json : null;
       if (result.status.ok && resultJson?.flags.has_corrections) {
+        setLastCorrectionText(VOICE_AGENT_CORRECTION_TEXT(resultJson));
         setLastSignal({ type: "improvement", text: `Improvement: ${resultJson.flags.correction_type}` });
       } else if (result.status.ok) {
+        setLastCorrectionText("");
         setLastSignal({ type: "idle", text: "" });
       } else {
         setLastSignal({ type: "error", text: result.status.error || "Audio analysis failed" });
@@ -533,6 +546,32 @@ function AppVoiceExperience({
     } finally {
       if (speechAbortRef.current === controller) speechAbortRef.current = null;
     }
+  }
+
+  async function speakLastCorrectionOnce(text: string) {
+    if (!speakEnabledRef.current || !text.trim()) return;
+    const response = await fetch("/api/speak", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        provider: settings.provider,
+        text,
+        voice: settings.voice,
+        languageName: settings.languageName,
+        style: "Speak only this stored correction. Do not add explanation."
+      })
+    });
+    if (!response.ok) {
+      setLastSignal({ type: "error", text: await response.text().catch(() => "Could not speak last correction.") });
+      return;
+    }
+    const audio = await response.blob();
+    const audioBase64 = await blobToBase64(audio);
+    const audioFormat = audio.type.includes("wav") ? "wav" : "mp3";
+    const playResult = await playVoiceAgentAudio({ audioBase64, audioFormat });
+    if (lastAudioUrl) URL.revokeObjectURL(lastAudioUrl);
+    setLastAudioUrl(URL.createObjectURL(audio));
+    if (!playResult.played && !playResult.stopped) setLastSignal({ type: "error", text: "Stored correction audio returned, but browser playback failed" });
   }
 
   return (

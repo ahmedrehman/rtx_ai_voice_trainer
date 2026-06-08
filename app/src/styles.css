@@ -366,14 +366,15 @@ p {
   width: 13px;
   height: 13px;
   border-radius: 999px;
-  border: 1px solid #bdbdbd;
-  background: #ededed;
+  border: 1px solid #287b45;
+  background: #3b9d5a;
+  box-shadow: 0 0 0 4px #e9f8ee;
 }
 
 .signal-lamp.improvement {
-  border-color: #c78318;
-  background: #f7b84b;
-  box-shadow: 0 0 0 4px #fff3d6;
+  border-color: #a01717;
+  background: #d83b3b;
+  box-shadow: 0 0 0 4px #ffe3e3;
 }
 
 .signal-lamp.error {
