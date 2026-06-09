@@ -1,4 +1,6 @@
 import type {
+  AudioRoundtripRecordOutput,
+  AudioRoundtripServerOutput,
   RealtimeWebrtcConfig,
   RealtimeWebrtcConnection,
   RealtimeWebrtcConnectionInput,
@@ -86,6 +88,108 @@ export function VOICE_AGENT_REALTIME_BROWSER_MONITOR_MIC_LEVEL(
     return {
       status: errorStatus(method, startedAt, error),
       stop: () => undefined
+    };
+  }
+}
+
+export async function VOICE_AGENT_REALTIME_BROWSER_RECORD_AUDIO_SAMPLE(
+  config: RealtimeWebrtcConfig,
+  input: {
+    stream: MediaStream;
+    durationMs: number;
+    mimeType?: string;
+  }
+): Promise<AudioRoundtripRecordOutput> {
+  const startedAt = new Date().toISOString();
+  const method = "VOICE_AGENT_REALTIME_BROWSER_RECORD_AUDIO_SAMPLE";
+  const durationMs = Math.max(300, input.durationMs);
+  try {
+    if (typeof MediaRecorder === "undefined") throw new Error("Browser MediaRecorder API is unavailable.");
+    const mimeType = chooseMediaRecorderMimeType(input.mimeType);
+    const recorder = new MediaRecorder(input.stream, mimeType ? { mimeType } : undefined);
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push(event.data);
+    };
+    const audio = await new Promise<Blob>((resolve, reject) => {
+      recorder.onerror = () => reject(new Error("Browser audio recording failed."));
+      recorder.onstop = () => resolve(new Blob(chunks, { type: recorder.mimeType || mimeType || "audio/webm" }));
+      recorder.start(250);
+      window.setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+      }, durationMs);
+    });
+    log(config, "info", method, "done", { size: audio.size, type: audio.type, durationMs });
+    return {
+      status: doneStatus(method, startedAt),
+      audio,
+      debug: {
+        durationMs,
+        mimeType: audio.type,
+        size: audio.size
+      }
+    };
+  } catch (error) {
+    log(config, "error", method, errorMessage(error));
+    return {
+      status: errorStatus(method, startedAt, error),
+      audio: null,
+      debug: {
+        durationMs,
+        mimeType: input.mimeType || "",
+        size: 0
+      }
+    };
+  }
+}
+
+export async function VOICE_AGENT_REALTIME_SERVER_AUDIO_ROUNDTRIP(
+  config: RealtimeWebrtcConfig,
+  input: {
+    endpoint: string;
+    audio: Blob;
+  }
+): Promise<AudioRoundtripServerOutput> {
+  const startedAt = new Date().toISOString();
+  const method = "VOICE_AGENT_REALTIME_SERVER_AUDIO_ROUNDTRIP";
+  const startedMs = Date.now();
+  try {
+    const response = await fetch(input.endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": input.audio.type || "application/octet-stream"
+      },
+      body: input.audio
+    });
+    if (!response.ok) throw new Error(await response.text().catch(() => `Audio roundtrip failed with ${response.status}`));
+    const audio = await response.blob();
+    const output = {
+      status: doneStatus(method, startedAt),
+      audio,
+      debug: {
+        endpoint: input.endpoint,
+        requestContentType: input.audio.type || "application/octet-stream",
+        requestSize: input.audio.size,
+        responseContentType: audio.type || response.headers.get("Content-Type") || "",
+        responseSize: audio.size,
+        durationMs: Date.now() - startedMs
+      }
+    };
+    log(config, "info", method, "done", output.debug);
+    return output;
+  } catch (error) {
+    log(config, "error", method, errorMessage(error));
+    return {
+      status: errorStatus(method, startedAt, error),
+      audio: null,
+      debug: {
+        endpoint: input.endpoint,
+        requestContentType: input.audio.type || "application/octet-stream",
+        requestSize: input.audio.size,
+        responseContentType: "",
+        responseSize: 0,
+        durationMs: Date.now() - startedMs
+      }
     };
   }
 }
@@ -267,6 +371,18 @@ function parseRealtimeEvent(value: string) {
   } catch {
     return { type: "unparseable_message", value };
   }
+}
+
+function chooseMediaRecorderMimeType(preferred?: string) {
+  const candidates = [
+    preferred || "",
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus"
+  ].filter(Boolean);
+  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") return preferred || "";
+  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || "";
 }
 
 function audioRms(samples: Uint8Array) {

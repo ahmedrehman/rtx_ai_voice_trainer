@@ -4,9 +4,11 @@ import {
   VOICE_AGENT_REALTIME_BROWSER_CONNECT_WEBRTC,
   VOICE_AGENT_REALTIME_BROWSER_MONITOR_MIC_LEVEL,
   VOICE_AGENT_REALTIME_BROWSER_OPEN_MICROPHONE,
+  VOICE_AGENT_REALTIME_BROWSER_RECORD_AUDIO_SAMPLE,
   VOICE_AGENT_REALTIME_DECIDE_EVENT_STATE,
   VOICE_AGENT_REALTIME_READ_CLIENT_SECRET,
   VOICE_AGENT_REALTIME_REDACT_SECRETS,
+  VOICE_AGENT_REALTIME_SERVER_AUDIO_ROUNDTRIP,
   VOICE_AGENT_REALTIME_SUMMARIZE_EVENT
 } from "./client";
 import { VOICE_AGENT_REALTIME_CREATE_INSTRUCTIONS, VOICE_AGENT_REALTIME_NORMALIZE_VOICE } from "./prompts";
@@ -23,6 +25,8 @@ type RealtimeConnectionState = "idle" | "starting" | "connected" | "stopping" | 
 
 export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: VoiceAgentSettings }) {
   const [endpoint, setEndpoint] = useState("/api/voice-agent/realtime-client-secret");
+  const [roundtripEndpoint, setRoundtripEndpoint] = useState("/api/voice-agent/audio-roundtrip");
+  const [roundtripDurationMs, setRoundtripDurationMs] = useState(4000);
   const [sendToAi, setSendToAi] = useState(false);
   const [suppressSpeakerFeedback, setSuppressSpeakerFeedback] = useState(true);
   const [connectionState, setConnectionState] = useState<RealtimeConnectionState>("idle");
@@ -37,6 +41,8 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
   const [error, setError] = useState("");
   const [events, setEvents] = useState<RealtimeEventLog[]>([]);
   const [clientSecretDebug, setClientSecretDebug] = useState<unknown>(null);
+  const [roundtripDebug, setRoundtripDebug] = useState<unknown>(null);
+  const [roundtripAudioUrl, setRoundtripAudioUrl] = useState("");
 
   const connectionRef = useRef<RealtimeWebrtcConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -62,6 +68,10 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
   }, []);
 
   async function startRealtime() {
+    if (!sendToAi) {
+      await runServerRoundtrip();
+      return;
+    }
     setError("");
     setEvents([]);
     setClientSecretDebug(null);
@@ -128,6 +138,59 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
     }
   }
 
+  async function runServerRoundtrip() {
+    setError("");
+    setEvents([]);
+    setClientSecretDebug(null);
+    setRoundtripDebug(null);
+    if (roundtripAudioUrl) URL.revokeObjectURL(roundtripAudioUrl);
+    setRoundtripAudioUrl("");
+    setConnectionState("starting");
+    try {
+      const micSession = await VOICE_AGENT_REALTIME_BROWSER_OPEN_MICROPHONE({}, {});
+      if (!micSession.status.ok || !micSession.stream) throw new Error(micSession.status.error || "Microphone did not open.");
+      const monitor = VOICE_AGENT_REALTIME_BROWSER_MONITOR_MIC_LEVEL({}, {
+        stream: micSession.stream,
+        onSample: (sample) => {
+          setMicLevel(sample.rms);
+          setLocalVoiceDetected(sample.voiceDetected);
+        }
+      });
+      setPeerState("server_roundtrip");
+      setDataChannelState("none");
+      setMicSentToAi(false);
+      setMicSendReason("server_roundtrip");
+      const recorded = await VOICE_AGENT_REALTIME_BROWSER_RECORD_AUDIO_SAMPLE({}, {
+        stream: micSession.stream,
+        durationMs: roundtripDurationMs
+      });
+      monitor.stop();
+      micSession.stream.getTracks().forEach((track) => track.stop());
+      if (!recorded.status.ok || !recorded.audio) throw new Error(recorded.status.error || "Recording failed.");
+      const returned = await VOICE_AGENT_REALTIME_SERVER_AUDIO_ROUNDTRIP({}, {
+        endpoint: roundtripEndpoint,
+        audio: recorded.audio
+      });
+      if (!returned.status.ok || !returned.audio) throw new Error(returned.status.error || "Server roundtrip failed.");
+      const audioUrl = URL.createObjectURL(returned.audio);
+      setRoundtripAudioUrl(audioUrl);
+      setRoundtripDebug({
+        business_target: "BROWSER_AUDIO_TO_SERVER_AND_BACK",
+        steps: [
+          { step: "open_microphone", status: micSession.status },
+          { step: "record_browser_audio", status: recorded.status, debug: recorded.debug },
+          { step: "post_audio_to_server", status: returned.status, debug: returned.debug },
+          { step: "play_returned_audio", status: "audio element ready" }
+        ]
+      });
+      setPeerState("server_roundtrip_done");
+      setConnectionState("idle");
+    } catch (caught) {
+      setConnectionState("error");
+      setError(caught instanceof Error ? caught.message : String(caught));
+    }
+  }
+
   async function stopRealtime() {
     setConnectionState((current) => current === "idle" ? "idle" : "stopping");
     micMonitorRef.current?.stop();
@@ -172,10 +235,12 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
         <section className="method-panel">
           <h2>Realtime Controls</h2>
           <label className="field"><span>client secret endpoint</span><input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} /><small>Must be wired to call VOICE_AGENT_REALTIME_CREATE_CLIENT_SECRET on the server.</small></label>
+          <label className="field"><span>server audio roundtrip endpoint</span><input value={roundtripEndpoint} onChange={(event) => setRoundtripEndpoint(event.target.value)} /><small>Used when Send microphone audio to AI is off. Server returns the same uploaded audio.</small></label>
+          <label className="field"><span>server roundtrip record ms</span><input type="number" value={roundtripDurationMs} min={500} step={500} onChange={(event) => setRoundtripDurationMs(Number(event.target.value))} /><small>How long to record before sending audio to the server echo endpoint.</small></label>
           <label className="check-row"><input type="checkbox" checked={sendToAi} onChange={(event) => setSendToAi(event.target.checked)} /> <span>Send microphone audio to AI</span></label>
           <label className="check-row"><input type="checkbox" checked={suppressSpeakerFeedback} onChange={(event) => setSuppressSpeakerFeedback(event.target.checked)} /> <span>Disable mic track while AI audio is playing</span></label>
           <div className="button-row">
-            <button className="run-button" type="button" onClick={() => void startRealtime()} disabled={connectionState === "starting" || connectionState === "connected"}>{connectionState === "starting" ? "Starting..." : "Start WebRTC"}</button>
+            <button className="run-button" type="button" onClick={() => void startRealtime()} disabled={connectionState === "starting" || connectionState === "connected"}>{connectionState === "starting" ? "Running..." : sendToAi ? "Start AI realtime trip" : "Start server audio roundtrip"}</button>
             <button className="secondary-button" type="button" onClick={() => void stopRealtime()} disabled={connectionState === "idle"}>Stop</button>
           </div>
         </section>
@@ -193,6 +258,16 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
       </div>
 
       {error && <section className="warning">ERROR: {error}</section>}
+
+      <section className="method-panel">
+        <h2>Server Audio Roundtrip</h2>
+        <p>{sendToAi ? "Disabled while AI trip is selected." : "Records browser audio, sends it to the server, receives the same audio, and plays it."}</p>
+        {roundtripAudioUrl ? <audio controls src={roundtripAudioUrl} /> : <p>No returned server audio yet.</p>}
+        <details open>
+          <summary>Roundtrip debug</summary>
+          <pre>{JSON.stringify(roundtripDebug || { status: "not run" }, null, 2)}</pre>
+        </details>
+      </section>
 
       <section className="method-panel">
         <h2>Client Secret Result</h2>

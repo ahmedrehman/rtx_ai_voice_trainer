@@ -29,6 +29,29 @@ export type RealtimeWebrtcMicSession = {
   };
 };
 
+export type AudioRoundtripRecordOutput = {
+  status: RealtimeWebrtcStatus;
+  audio: Blob | null;
+  debug: {
+    durationMs: number;
+    mimeType: string;
+    size: number;
+  };
+};
+
+export type AudioRoundtripServerOutput = {
+  status: RealtimeWebrtcStatus;
+  audio: Blob | null;
+  debug: {
+    endpoint: string;
+    requestContentType: string;
+    requestSize: number;
+    responseContentType: string;
+    responseSize: number;
+    durationMs: number;
+  };
+};
+
 export type RealtimeWebrtcMicMonitorSample = {
   rms: number;
   voiceDetected: boolean;

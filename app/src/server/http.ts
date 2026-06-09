@@ -64,6 +64,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       return voiceAgentRealtimeClientSecret(request, env);
     }
 
+    if (pathname === "/api/voice-agent/audio-roundtrip") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return voiceAgentAudioRoundtrip(request);
+    }
+
     if (pathname === "/api/voice-agent/voice-turn-stream") {
       if (request.method !== "POST") return methodNotAllowed();
       return voiceAgentVoiceTurnStream(request, env);
@@ -240,6 +245,19 @@ async function voiceAgentRealtimeClientSecret(request: Request, env: Env) {
     openAiApiKey: env.OPENAI_API_KEY
   });
   return json(result.status.ok ? result.response : result, result.status.ok ? 200 : 500);
+}
+
+async function voiceAgentAudioRoundtrip(request: Request) {
+  const contentType = request.headers.get("Content-Type") || "application/octet-stream";
+  const body = await request.arrayBuffer();
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": contentType,
+      "Cache-Control": "no-store",
+      "X-Audio-Roundtrip-Bytes": String(body.byteLength)
+    }
+  });
 }
 
 async function realMethod(request: Request, env: Env) {
