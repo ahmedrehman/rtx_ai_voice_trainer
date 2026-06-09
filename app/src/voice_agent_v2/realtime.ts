@@ -254,10 +254,10 @@ export function VOICE_AGENT_V2_REALTIME_CREATE_INSTRUCTIONS(settings: VoiceAgent
     mode,
     "Reply with spoken audio directly. Keep every answer very short.",
     "Also emit the same short answer as response transcript/text events when available.",
-    "Also include correction fields when available: correction 0 none, 1 small improvement/pronunciation, 2 important improvement, 3 grammar or very wrong; text; optional hint. JSON is preferred, but plain text like \"correction 2: ... hint: ...\" is acceptable.",
+    "Speak in the target language. For spoken correction labels, use only these natural words: Exacte for no correction, Mieux for improvement, Correction for a real mistake. Never say the English word Hint.",
     settings.allowFreeChat
       ? "Answer the user's question naturally. Correct only when the user asks for correction or clearly practices the language."
-      : "For practice speech, say only one corrected phrase and one tiny hint when useful. If there is no useful correction, stay silent or give a very short confirmation.",
+      : "For practice speech, say only one corrected phrase and one tiny tip when useful. If there is no useful correction, stay silent or give a very short confirmation.",
     "Example correction: Je suis malade, avec etre.",
     "Do not greet. Do not explain implementation details. Do not say JSON.",
     "If you hear your own previous answer through the microphone, ignore it and stay silent.",
