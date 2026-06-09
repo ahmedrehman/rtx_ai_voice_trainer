@@ -204,7 +204,7 @@ async function finalizeTurn(input: {
   response: unknown;
 }): Promise<VoiceAgentV2TurnResult> {
   const correctionLevel = VOICE_AGENT_V2_CORRECTION_LEVEL(input.response);
-  const shouldKeepAudio = Boolean(input.speakEnabled && correctionLevel >= input.settings.speakLevel && VOICE_AGENT_V2_CHAT_TEXT(input.response).trim());
+  const shouldKeepAudio = Boolean(correctionLevel >= input.settings.speakLevel && VOICE_AGENT_V2_CHAT_TEXT(input.response).trim());
   const audio = shouldKeepAudio
     ? await VOICE_AGENT_V2_TEXT_TO_SPEECH({
         text: VOICE_AGENT_V2_CHAT_TEXT(input.response),
@@ -223,7 +223,9 @@ async function finalizeTurn(input: {
     debug: {
       promptConfig: input.promptConfig,
       historySent: input.history,
-      speakDecision: shouldKeepAudio ? `KEEP_AUDIO_LEVEL_${correctionLevel}` : `TEXT_ONLY_LEVEL_${correctionLevel}`,
+      speakDecision: shouldKeepAudio
+        ? input.speakEnabled ? `AUTO_PLAY_AUDIO_LEVEL_${correctionLevel}` : `KEEP_AUDIO_LINK_LEVEL_${correctionLevel}`
+        : `TEXT_ONLY_LEVEL_${correctionLevel}`,
       correctionEvent: { correction: correctionLevel }
     }
   };
