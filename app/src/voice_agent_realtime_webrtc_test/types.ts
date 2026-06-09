@@ -52,6 +52,8 @@ export type AudioRoundtripVoiceSegmentOutput = {
   debug: {
     threshold: number;
     silenceMs: number;
+    preBufferMs?: number;
+    preBufferIncludedMs?: number;
     maxWaitMs: number;
     maxRecordMs: number;
     minVoiceMs: number;

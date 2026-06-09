@@ -45,6 +45,8 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
   const [clientSecretDebug, setClientSecretDebug] = useState<unknown>(null);
   const [roundtripDebug, setRoundtripDebug] = useState<unknown>(null);
   const [roundtripEvents, setRoundtripEvents] = useState<RealtimeEventLog[]>([]);
+  const [serverSendActive, setServerSendActive] = useState(false);
+  const [serverSendText, setServerSendText] = useState("NOT SEND - server roundtrip not started");
 
   const connectionRef = useRef<RealtimeWebrtcConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
@@ -78,6 +80,8 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
     setError("");
     setEvents([]);
     setClientSecretDebug(null);
+    setServerSendActive(false);
+    setServerSendText("NOT SEND - AI realtime mode selected");
     setConnectionState("starting");
     try {
       const micSession = await VOICE_AGENT_REALTIME_BROWSER_OPEN_MICROPHONE({}, {});
@@ -147,6 +151,8 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
     setClientSecretDebug(null);
     setRoundtripDebug(null);
     setRoundtripEvents([]);
+    setServerSendActive(false);
+    setServerSendText("NOT SEND - listening for voice");
     serverRoundtripStopRef.current = false;
     setConnectionState("starting");
     try {
@@ -168,6 +174,7 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
           stream: micSession.stream,
           threshold: voiceThreshold,
           silenceMs,
+          preBufferMs: 1000,
           maxRecordMs: maxSegmentMs,
           onSample: (sample) => {
             setMicLevel(sample.rms);
@@ -184,7 +191,13 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
           latestSegment: segment.debug
         });
         if (serverRoundtripStopRef.current) break;
-        if (segment.decision !== "send_voice_segment" || !segment.audio) continue;
+        if (segment.decision !== "send_voice_segment" || !segment.audio) {
+          setServerSendActive(false);
+          setServerSendText(`NOT SEND - ${segment.decision}`);
+          continue;
+        }
+        setServerSendActive(true);
+        setServerSendText(`SEND - server echo ${segment.audio.size} bytes`);
         const returned = await VOICE_AGENT_REALTIME_SERVER_AUDIO_ROUNDTRIP({}, {
           endpoint: roundtripEndpoint,
           audio: segment.audio
@@ -198,6 +211,8 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
           continue;
         }
         await playReturnedAudioNow(returned.audio);
+        setServerSendActive(true);
+        setServerSendText(`SEND - returned audio played ${returned.debug.responseSize} bytes`);
       }
     } catch (caught) {
       setConnectionState("error");
@@ -226,6 +241,8 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
     }
     setMicSentToAi(false);
     setMicSendReason("send_to_ai_off");
+    setServerSendActive(false);
+    setServerSendText("NOT SEND - stopped");
     setRealtimeSpeechDetected(false);
     setAiSpeaking(false);
     setPeerState("none");
@@ -296,6 +313,7 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
           <SignalLine label="peer" active={peerState === "connected"} value={peerState} />
           <SignalLine label="data channel" active={dataChannelState === "open"} value={dataChannelState} />
           <SignalLine label="local mic voice" active={localVoiceDetected} value={`${localVoiceDetected ? "voice/sound" : "no voice"} rms=${micLevel}`} />
+          <ServerSendLamp active={serverSendActive} value={serverSendText} />
           <SignalLine label="sent to AI" active={micSentToAi} value={`${micSentToAi ? "YES" : "NO"} reason=${micSendReason}`} />
           <SignalLine label="AI heard speech" active={realtimeSpeechDetected} value={realtimeSpeechDetected ? "YES" : "NO"} />
           <SignalLine label="AI speaking" active={aiSpeaking} value={aiSpeaking ? "YES - mic gate active" : "NO"} />
@@ -355,6 +373,16 @@ function SignalLine({ label, active, value }: { label: string; active: boolean; 
     <div className="step done">
       <strong>{label}</strong>
       <span>{active ? "active" : "idle"}</span>
+      <p>{value}</p>
+    </div>
+  );
+}
+
+function ServerSendLamp({ active, value }: { active: boolean; value: string }) {
+  return (
+    <div className={`step ${active ? "done" : "error"}`}>
+      <strong>server send lamp</strong>
+      <span>{active ? "SEND" : "NOT SEND"}</span>
       <p>{value}</p>
     </div>
   );

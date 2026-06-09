@@ -150,6 +150,7 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
     stream: MediaStream;
     threshold?: number;
     silenceMs?: number;
+    preBufferMs?: number;
     maxWaitMs?: number;
     maxRecordMs?: number;
     minVoiceMs?: number;
@@ -162,6 +163,7 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
   const method = "VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT";
   const threshold = input.threshold ?? 0.025;
   const silenceMs = input.silenceMs ?? 650;
+  const preBufferMs = Math.max(0, input.preBufferMs ?? 1000);
   const maxWaitMs = input.maxWaitMs ?? 8000;
   const maxRecordMs = input.maxRecordMs ?? 6000;
   const minVoiceMs = input.minVoiceMs ?? 180;
@@ -174,6 +176,7 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
   let sampleCount = 0;
   let mimeType = input.mimeType || "";
   let size = 0;
+  let preBufferIncludedMs = 0;
 
   try {
     if (typeof MediaRecorder === "undefined") throw new Error("Browser MediaRecorder API is unavailable.");
@@ -186,9 +189,9 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
     source.connect(analyser);
     const samples = new Uint8Array(analyser.fftSize);
     const recorderMimeType = chooseMediaRecorderMimeType(input.mimeType);
-    let recorder: MediaRecorder | null = null;
-    const chunks: Blob[] = [];
-    let recordingStartedMs = 0;
+    const recorder = new MediaRecorder(input.stream, recorderMimeType ? { mimeType: recorderMimeType } : undefined);
+    const chunks: Array<{ blob: Blob; receivedAtMs: number }> = [];
+    let speechStartedMs = 0;
     let lastVoiceMs = 0;
     let sawVoice = false;
     let stopped = false;
@@ -202,16 +205,40 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
         void context.close().catch(() => undefined);
         resolve(value);
       };
-      const stopRecorder = () => {
-        if (recorder?.state === "recording") {
+      const stopRecorder = (sendAudio: boolean) => {
+        if (recorder.state === "recording") {
+          recorder.onstop = () => {
+            if (!sendAudio) {
+              finish(null);
+              return;
+            }
+            const includeFromMs = speechStartedMs ? speechStartedMs - preBufferMs : Date.now();
+            const selectedChunks = chunks.filter((chunk, index) => index === 0 || chunk.receivedAtMs >= includeFromMs).map((chunk) => chunk.blob);
+            const blob = new Blob(selectedChunks, { type: mimeType });
+            size = blob.size;
+            finish(blob);
+          };
           recorder.stop();
           return;
         }
         finish(null);
       };
+      mimeType = recorder.mimeType || recorderMimeType || "audio/webm";
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push({ blob: event.data, receivedAtMs: Date.now() });
+      };
+      recorder.onerror = () => reject(new Error("Browser audio segment recording failed."));
+      recorder.onstop = () => {
+        const includeFromMs = speechStartedMs ? speechStartedMs - preBufferMs : Date.now();
+        const selectedChunks = chunks.filter((chunk, index) => index === 0 || chunk.receivedAtMs >= includeFromMs).map((chunk) => chunk.blob);
+        const blob = new Blob(selectedChunks, { type: mimeType });
+        size = blob.size;
+        finish(blob);
+      };
+      recorder.start(250);
       const timer = window.setInterval(() => {
         if (input.shouldStop?.()) {
-          stopRecorder();
+          stopRecorder(false);
           return;
         }
         analyser.getByteTimeDomainData(samples);
@@ -223,35 +250,24 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
         input.onSample?.({ rms, voiceDetected });
         const now = Date.now();
         if (voiceDetected) {
+          if (!sawVoice) {
+            speechStartedMs = now;
+            preBufferIncludedMs = Math.min(preBufferMs, Math.max(0, now - startedMs));
+          }
           sawVoice = true;
           lastVoiceMs = now;
-          if (recorder) voiceActiveMs += sampleEveryMs;
-          if (!recorder) {
-            recorder = new MediaRecorder(input.stream, recorderMimeType ? { mimeType: recorderMimeType } : undefined);
-            mimeType = recorder.mimeType || recorderMimeType || "audio/webm";
-            recordingStartedMs = now;
-            recorder.ondataavailable = (event) => {
-              if (event.data.size > 0) chunks.push(event.data);
-            };
-            recorder.onerror = () => reject(new Error("Browser audio segment recording failed."));
-            recorder.onstop = () => {
-              const blob = new Blob(chunks, { type: mimeType });
-              size = blob.size;
-              finish(blob);
-            };
-            recorder.start(250);
-          }
+          voiceActiveMs += sampleEveryMs;
         }
-        if (!recorder && now - startedMs >= maxWaitMs) {
-          finish(null);
+        if (!sawVoice && now - startedMs >= maxWaitMs) {
+          stopRecorder(false);
           return;
         }
-        if (recorder && now - recordingStartedMs >= maxRecordMs) {
-          stopRecorder();
+        if (sawVoice && now - speechStartedMs >= maxRecordMs) {
+          stopRecorder(true);
           return;
         }
-        if (recorder && sawVoice && now - lastVoiceMs >= silenceMs) {
-          stopRecorder();
+        if (sawVoice && now - lastVoiceMs >= silenceMs) {
+          stopRecorder(true);
         }
       }, sampleEveryMs);
     });
@@ -261,6 +277,8 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
       return voiceSegmentOutput(startedAt, "skip_no_voice", null, {
         threshold,
         silenceMs,
+        preBufferMs,
+        preBufferIncludedMs,
         maxWaitMs,
         maxRecordMs,
         minVoiceMs,
@@ -277,6 +295,8 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
       return voiceSegmentOutput(startedAt, "skip_empty_audio", null, {
         threshold,
         silenceMs,
+        preBufferMs,
+        preBufferIncludedMs,
         maxWaitMs,
         maxRecordMs,
         minVoiceMs,
@@ -293,6 +313,8 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
       return voiceSegmentOutput(startedAt, "skip_too_short", audio, {
         threshold,
         silenceMs,
+        preBufferMs,
+        preBufferIncludedMs,
         maxWaitMs,
         maxRecordMs,
         minVoiceMs,
@@ -308,6 +330,8 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
     return voiceSegmentOutput(startedAt, "send_voice_segment", audio, {
       threshold,
       silenceMs,
+      preBufferMs,
+      preBufferIncludedMs,
       maxWaitMs,
       maxRecordMs,
       minVoiceMs,
@@ -328,6 +352,8 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
       debug: {
         threshold,
         silenceMs,
+        preBufferMs,
+        preBufferIncludedMs,
         maxWaitMs,
         maxRecordMs,
         minVoiceMs,
