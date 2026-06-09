@@ -1,7 +1,6 @@
 import {
   VOICE_AGENT_ANALYSE_AUDIO,
   VOICE_AGENT_CREATE_SETTINGS,
-  VOICE_AGENT_RECORD_CHUNK,
   VOICE_AGENT_SEND_TEXT_CHAT,
   VOICE_AGENT_TOPIC_PRESETS,
   type VoiceAgentChatMessage,
@@ -10,6 +9,11 @@ import {
   type VoiceAgentTopicId
 } from "../voice_agent";
 import type { AudioAnalyserOutput } from "../lib_server_ai_voice";
+export {
+  VOICE_AGENT_V2_CAPTURE_VOICE_SEGMENT,
+  VOICE_AGENT_V2_OPEN_MICROPHONE,
+  type VoiceAgentV2VoiceSegment
+} from "./capture";
 
 export type VoiceAgentV2CorrectionLevel = 0 | 1 | 2 | 3;
 export type VoiceAgentV2Signal = "green" | "yellow" | "orange" | "red";
@@ -104,18 +108,6 @@ export function VOICE_AGENT_V2_CREATE_PROMPTS(settings: VoiceAgentV2Settings): V
     ].join("\n"),
     responseJsonFormat: responseJsonFormat()
   };
-}
-
-export async function VOICE_AGENT_V2_RECORD_CHUNK(settings: VoiceAgentV2Settings) {
-  return VOICE_AGENT_RECORD_CHUNK({}, {
-    maxDurationMs: 8000,
-    silenceMs: 1200,
-    mediaChunkMs: 250,
-    speechCheckLang: settings.languageName === "French" ? "fr-FR" : "en-US",
-    chunkDecisionMode: "auto",
-    energyThreshold: 0.035,
-    minEnergyActiveMs: 250
-  });
 }
 
 export async function VOICE_AGENT_V2_ANALYSE_AUDIO(input: {

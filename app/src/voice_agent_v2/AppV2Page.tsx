@@ -2,16 +2,18 @@ import React, { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import {
   VOICE_AGENT_V2_ANALYSE_AUDIO,
+  VOICE_AGENT_V2_CAPTURE_VOICE_SEGMENT,
   VOICE_AGENT_V2_CREATE_PROMPTS,
   VOICE_AGENT_V2_CREATE_SETTINGS,
   VOICE_AGENT_V2_DEFAULT_SETTINGS,
-  VOICE_AGENT_V2_RECORD_CHUNK,
+  VOICE_AGENT_V2_OPEN_MICROPHONE,
   VOICE_AGENT_V2_SEND_TEXT,
   VOICE_AGENT_V2_TOPIC_PRESETS,
   VOICE_AGENT_V2_VISIBLE_HISTORY,
   type VoiceAgentV2Settings,
   type VoiceAgentV2Signal,
-  type VoiceAgentV2TurnResult
+  type VoiceAgentV2TurnResult,
+  type VoiceAgentV2VoiceSegment
 } from ".";
 import type { VoiceAgentChatMessage, VoiceAgentPromptConfig, VoiceAgentTopicId } from "../voice_agent";
 
@@ -33,7 +35,8 @@ export function VoiceAgentV2AppPage({
   const [speakOn, setSpeakOn] = useState(false);
   const [running, setRunning] = useState(false);
   const [signal, setSignal] = useState<VoiceAgentV2Signal>("green");
-  const [technical, setTechnical] = useState<VoiceAgentV2TurnResult | null>(null);
+  const [technical, setTechnical] = useState<VoiceAgentV2TurnResult | VoiceAgentV2VoiceSegment | { status: unknown } | null>(null);
+  const [latestSegment, setLatestSegment] = useState<VoiceAgentV2VoiceSegment | null>(null);
   const messagesRef = useRef(messages);
   const stopListenRef = useRef(false);
   const listenLoopRef = useRef(false);
@@ -77,26 +80,49 @@ export function VoiceAgentV2AppPage({
     stopListenRef.current = false;
     listenLoopRef.current = true;
     setListenOn(true);
-    while (!stopListenRef.current) {
-      setRunning(true);
-      try {
-        const chunk = await VOICE_AGENT_V2_RECORD_CHUNK(settings);
-        if (chunk.useful && chunk.chunk.audio) {
-          const result = await VOICE_AGENT_V2_ANALYSE_AUDIO({
-            settings,
-            audio: chunk.chunk.audio,
-            visibleHistory: VOICE_AGENT_V2_VISIBLE_HISTORY(messagesRef.current),
-            speakEnabled: speakOn
-          });
-          applyTurn(result);
-        }
-      } finally {
-        setRunning(false);
-      }
-      await wait(150);
+    const mic = await VOICE_AGENT_V2_OPEN_MICROPHONE();
+    if (!mic.status.ok || !mic.stream) {
+      setTechnical({ status: mic.status });
+      listenLoopRef.current = false;
+      setListenOn(false);
+      return;
     }
-    listenLoopRef.current = false;
-    setListenOn(false);
+    try {
+      while (!stopListenRef.current) {
+        setRunning(true);
+        try {
+          const segment = await VOICE_AGENT_V2_CAPTURE_VOICE_SEGMENT({
+            stream: mic.stream,
+            threshold: 0.025,
+            silenceMs: 650,
+            preBufferMs: 1000,
+            recorderWhileListening: true,
+            maxWaitMs: 8000,
+            maxRecordMs: 6000,
+            minVoiceMs: 180,
+            shouldStop: () => stopListenRef.current
+          });
+          setTechnical(segment);
+          setLatestSegment(segment);
+          if (segment.decision === "send_voice_segment" && segment.audio) {
+            const result = await VOICE_AGENT_V2_ANALYSE_AUDIO({
+              settings,
+              audio: segment.audio,
+              visibleHistory: VOICE_AGENT_V2_VISIBLE_HISTORY(messagesRef.current),
+              speakEnabled: speakOn
+            });
+            applyTurn(result);
+          }
+        } finally {
+          setRunning(false);
+        }
+        await wait(150);
+      }
+    } finally {
+      mic.stream.getTracks().forEach((track) => track.stop());
+      listenLoopRef.current = false;
+      setListenOn(false);
+    }
   }
 
   function toggleListen() {
@@ -191,6 +217,10 @@ export function VoiceAgentV2AppPage({
             <section className="method-panel">
               <h2>Technical Prompts</h2>
               <pre>{JSON.stringify(VOICE_AGENT_V2_CREATE_PROMPTS(settings), null, 2)}</pre>
+            </section>
+            <section className="method-panel">
+              <h2>Latest Capture</h2>
+              <pre>{JSON.stringify(latestSegment || { status: "not run" }, null, 2)}</pre>
             </section>
             <section className="method-panel">
               <h2>Latest V2 Result</h2>
