@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Send } from "lucide-react";
 import {
   VOICE_AGENT_V2_ANALYSE_AUDIO,
   VOICE_AGENT_V2_CREATE_PROMPTS,
@@ -154,18 +155,33 @@ export function VoiceAgentV2AppPage({
           </span>
         </div>
 
-        <section className="chat-log">
+        <section className="chat-window">
           {messages.map((message) => (
-            <article className={`chat-bubble ${message.role}`} key={message.id}>
+            <article className={`chat-message ${message.role}`} key={message.id}>
+              <span>{message.role}</span>
               <p>{message.text}</p>
               {message.audioUrl && <button className="secondary-button" type="button" onClick={() => void new Audio(message.audioUrl).play()}>Play</button>}
             </article>
           ))}
         </section>
 
-        <div className="chat-input">
-          <input value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void sendText(); }} placeholder="Type a message..." />
-          <button className="run-button" type="button" onClick={() => void sendText()} disabled={running || !text.trim()}>{running ? "Sending..." : "Send"}</button>
+        <div className="chat-composer">
+          <textarea
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void sendText();
+              }
+            }}
+            rows={2}
+            placeholder="Type a message..."
+          />
+          <button className="run-button" type="button" onClick={() => void sendText()} disabled={running || !text.trim()}>
+            <Send size={17} />
+            <span>{running ? "Sending..." : "Send"}</span>
+          </button>
         </div>
       </div>
 
