@@ -151,6 +151,7 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
     threshold?: number;
     silenceMs?: number;
     preBufferMs?: number;
+    recorderWhileListening?: boolean;
     maxWaitMs?: number;
     maxRecordMs?: number;
     minVoiceMs?: number;
@@ -164,6 +165,7 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
   const threshold = input.threshold ?? 0.025;
   const silenceMs = input.silenceMs ?? 650;
   const preBufferMs = Math.max(0, input.preBufferMs ?? 1000);
+  const recorderWhileListening = input.recorderWhileListening ?? true;
   const maxWaitMs = input.maxWaitMs ?? 8000;
   const maxRecordMs = input.maxRecordMs ?? 6000;
   const minVoiceMs = input.minVoiceMs ?? 180;
@@ -189,6 +191,79 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
     source.connect(analyser);
     const samples = new Uint8Array(analyser.fftSize);
     const recorderMimeType = chooseMediaRecorderMimeType(input.mimeType);
+    let audio: Blob | null;
+
+    if (!recorderWhileListening) {
+      let recorder: MediaRecorder | null = null;
+      const chunks: Blob[] = [];
+      let recordingStartedMs = 0;
+      let lastVoiceMs = 0;
+      let sawVoice = false;
+      let stopped = false;
+
+      audio = await new Promise<Blob | null>((resolve, reject) => {
+        const finish = (value: Blob | null) => {
+          if (stopped) return;
+          stopped = true;
+          window.clearInterval(timer);
+          source.disconnect();
+          void context.close().catch(() => undefined);
+          resolve(value);
+        };
+        const stopRecorder = () => {
+          if (recorder?.state === "recording") {
+            recorder.stop();
+            return;
+          }
+          finish(null);
+        };
+        const timer = window.setInterval(() => {
+          if (input.shouldStop?.()) {
+            stopRecorder();
+            return;
+          }
+          analyser.getByteTimeDomainData(samples);
+          const rms = audioRms(samples);
+          sampleCount += 1;
+          totalRms += rms;
+          maxRms = Math.max(maxRms, rms);
+          const voiceDetected = rms >= threshold;
+          input.onSample?.({ rms, voiceDetected });
+          const now = Date.now();
+          if (voiceDetected) {
+            sawVoice = true;
+            lastVoiceMs = now;
+            if (recorder) voiceActiveMs += sampleEveryMs;
+            if (!recorder) {
+              recorder = new MediaRecorder(input.stream, recorderMimeType ? { mimeType: recorderMimeType } : undefined);
+              mimeType = recorder.mimeType || recorderMimeType || "audio/webm";
+              recordingStartedMs = now;
+              recorder.ondataavailable = (event) => {
+                if (event.data.size > 0) chunks.push(event.data);
+              };
+              recorder.onerror = () => reject(new Error("Browser audio segment recording failed."));
+              recorder.onstop = () => {
+                const blob = new Blob(chunks, { type: mimeType });
+                size = blob.size;
+                finish(blob);
+              };
+              recorder.start(250);
+            }
+          }
+          if (!recorder && now - startedMs >= maxWaitMs) {
+            finish(null);
+            return;
+          }
+          if (recorder && now - recordingStartedMs >= maxRecordMs) {
+            stopRecorder();
+            return;
+          }
+          if (recorder && sawVoice && now - lastVoiceMs >= silenceMs) {
+            stopRecorder();
+          }
+        }, sampleEveryMs);
+      });
+    } else {
     const recorder = new MediaRecorder(input.stream, recorderMimeType ? { mimeType: recorderMimeType } : undefined);
     const chunks: Array<{ blob: Blob; receivedAtMs: number }> = [];
     let speechStartedMs = 0;
@@ -196,7 +271,7 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
     let sawVoice = false;
     let stopped = false;
 
-    const audio = await new Promise<Blob | null>((resolve, reject) => {
+    audio = await new Promise<Blob | null>((resolve, reject) => {
       const finish = (value: Blob | null) => {
         if (stopped) return;
         stopped = true;
@@ -271,6 +346,7 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
         }
       }, sampleEveryMs);
     });
+    }
 
     durationMs = Date.now() - startedMs;
     if (!audio) {

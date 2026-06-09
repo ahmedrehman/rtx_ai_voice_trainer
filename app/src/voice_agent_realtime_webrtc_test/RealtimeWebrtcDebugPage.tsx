@@ -29,6 +29,7 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
   const [voiceThreshold, setVoiceThreshold] = useState(0.025);
   const [silenceMs, setSilenceMs] = useState(650);
   const [maxSegmentMs, setMaxSegmentMs] = useState(6000);
+  const [recorderWhileListening, setRecorderWhileListening] = useState(true);
   const [sendToAi, setSendToAi] = useState(false);
   const [suppressSpeakerFeedback, setSuppressSpeakerFeedback] = useState(true);
   const [connectionState, setConnectionState] = useState<RealtimeConnectionState>("idle");
@@ -175,6 +176,7 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
           threshold: voiceThreshold,
           silenceMs,
           preBufferMs: 1000,
+          recorderWhileListening,
           maxRecordMs: maxSegmentMs,
           onSample: (sample) => {
             setMicLevel(sample.rms);
@@ -300,6 +302,7 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
           <label className="field"><span>voice threshold</span><input type="number" value={voiceThreshold} min={0.001} max={0.2} step={0.001} onChange={(event) => setVoiceThreshold(Number(event.target.value))} /><small>Server roundtrip mode sends only segments above this local RMS threshold.</small></label>
           <label className="field"><span>silence ms</span><input type="number" value={silenceMs} min={200} step={50} onChange={(event) => setSilenceMs(Number(event.target.value))} /><small>After this silence, the current voice segment is sent to the server.</small></label>
           <label className="field"><span>max segment ms</span><input type="number" value={maxSegmentMs} min={1000} step={500} onChange={(event) => setMaxSegmentMs(Number(event.target.value))} /><small>Maximum length of one automatically sent server roundtrip segment.</small></label>
+          <label className="check-row"><input type="checkbox" checked={recorderWhileListening} onChange={(event) => setRecorderWhileListening(event.target.checked)} /> <span>Recorder active during voice check</span></label>
           <label className="check-row"><input type="checkbox" checked={sendToAi} onChange={(event) => setSendToAi(event.target.checked)} /> <span>Send microphone audio to AI</span></label>
           <label className="check-row"><input type="checkbox" checked={suppressSpeakerFeedback} onChange={(event) => setSuppressSpeakerFeedback(event.target.checked)} /> <span>Disable mic track while AI audio is playing</span></label>
           <div className="button-row">
