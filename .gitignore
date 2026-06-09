@@ -11,4 +11,5 @@ app/.env.*
 app/.wrangler/
 app/local-data/
 app/wrangler-login.*.log
-local-server.log
+local-server*.log
+logs/

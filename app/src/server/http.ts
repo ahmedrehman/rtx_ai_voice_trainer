@@ -2,6 +2,7 @@ import type { Env } from "./bindings";
 import { DUMBB_TEXT_TO_SPEACH, RAW_AUDIO_TO_AI_TEXT_AND_AUDIO } from "../mod_ai_calls";
 import { createAudioTurnDefaultPrompts } from "../lib_server_ai_voice";
 import { VOICE_AGENT_BACKEND, type VoiceAgentServerAnalyseRequest, type VoiceAgentTextChatRequest } from "../voice_agent";
+import { VOICE_AGENT_REALTIME_CREATE_CLIENT_SECRET, type RealtimeClientSecretInput } from "../voice_agent_realtime_webrtc_test/server";
 import { clearCostLedger, getCostLedger, listProviders, runCorrection } from "./app";
 import { json, methodNotAllowed, notFound } from "./responses";
 import { transcribeOpenAiFormData } from "./transcriptionEndpoint";
@@ -56,6 +57,11 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     if (pathname === "/api/voice-agent/text-chat-stream") {
       if (request.method !== "POST") return methodNotAllowed();
       return voiceAgentTextChatStream(request, env);
+    }
+
+    if (pathname === "/api/voice-agent/realtime-client-secret") {
+      if (request.method !== "POST") return methodNotAllowed();
+      return voiceAgentRealtimeClientSecret(request, env);
     }
 
     if (pathname === "/api/voice-agent/voice-turn-stream") {
@@ -221,6 +227,19 @@ async function voiceAgentVoiceTurnStream(request: Request, env: Env) {
     },
     body
   );
+}
+
+async function voiceAgentRealtimeClientSecret(request: Request, env: Env) {
+  if (!env.OPENAI_API_KEY) {
+    return json({ error: "VOICE_AGENT_REALTIME_WEBRTC is not connected." }, 503);
+  }
+
+  const body = await request.json() as RealtimeClientSecretInput;
+  const result = await VOICE_AGENT_REALTIME_CREATE_CLIENT_SECRET({
+    ...body,
+    openAiApiKey: env.OPENAI_API_KEY
+  });
+  return json(result.status.ok ? result.response : result, result.status.ok ? 200 : 500);
 }
 
 async function realMethod(request: Request, env: Env) {

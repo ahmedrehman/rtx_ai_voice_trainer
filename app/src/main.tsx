@@ -17,6 +17,7 @@ import { DATA_STORE_DEBUG_PAGES } from "./lib_data_store_test";
 import { SERVER_AI_VOICE_DEBUG_PAGES } from "./lib_server_ai_voice_test";
 import { VOICE_AGENT_FRONTEND_DEBUG_PAGES } from "./voice_agent_frontend_test";
 import { VoiceAgentFrontendTestPage } from "./voice_agent_frontend_test/pages";
+import { VOICE_AGENT_REALTIME_WEBRTC_DEBUG_PAGE, VoiceAgentRealtimeWebrtcDebugPage } from "./voice_agent_realtime_webrtc_test";
 import { AUDIO_ANALYSER_DEFAULT_PROMPTS, createAudioAnalyserDefaultPrompts } from "./lib_server_ai_voice/audioAnalyserPrompts";
 import { AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS, createAudioTurnDefaultPrompts } from "./lib_server_ai_voice/audioTurnPrompts";
 import {
@@ -65,6 +66,7 @@ const pages: Page[] = [
   { id: "APP_CHAT", title: "App", module: "App", role: "voice trainer chat with listen and speak controls", ready: true, inputs: [], actions: [], output: [], icon: MessageSquare },
   { id: "VOICE_AGENT_CONFIG", title: "Voice agent config", module: "App", role: "client topic and prompt configuration", ready: true, inputs: [], actions: [], output: [], icon: Server },
   ...VOICE_AGENT_FRONTEND_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
+  { ...VOICE_AGENT_REALTIME_WEBRTC_DEBUG_PAGE, icon: iconForPage(VOICE_AGENT_REALTIME_WEBRTC_DEBUG_PAGE) },
   ...CLIENT_VOICE_SYSTEM_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   ...SERVER_AI_VOICE_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   ...DATA_STORE_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) }))
@@ -72,6 +74,7 @@ const pages: Page[] = [
 
 function iconForPage(page: DebugPageDefinition) {
   if (page.id === "MICROPHONE_AUDIO_REQUIREMENTS") return BookOpen;
+  if (page.module === "voice_agent_realtime_webrtc_test") return Volume2;
   if (page.module === "voice_agent_frontend_test") return MessageSquare;
   if (page.module === "lib_server_ai_voice_test") return Server;
   if (page.module === "lib_data_store_test") return page.id.includes("CLEAR") || page.id.includes("RESET") ? Archive : Database;
@@ -203,6 +206,7 @@ function PageView({
           renderFullAppTest={() => <AppVoiceExperience debug settings={voiceAgentSettings} setSettings={setVoiceAgentSettings} />}
         />
       )}
+      {page.module === "voice_agent_realtime_webrtc_test" && <VoiceAgentRealtimeWebrtcDebugPage settings={voiceAgentSettings} />}
       {page.id === "VOICE_AGENT_CONFIG" && <VoiceAgentConfigPage settings={voiceAgentSettings} setSettings={setVoiceAgentSettings} />}
       {page.id === "MICROPHONE_AUDIO_REQUIREMENTS" && <MicrophoneDocs />}
       {page.id === "SYSTEM_MEANINGFUL_AUDIO_CHUNK" && <MeaningfulAudioChunkDebug />}
@@ -220,6 +224,7 @@ function PageView({
         "VOICE_AGENT_CONFIG",
         "VOICE_AGENT_TEXT_CHAT_TEST",
         "VOICE_AGENT_STREAM_TEXT_CHAT_TEST",
+        "VOICE_AGENT_REALTIME_WEBRTC_TEST",
         "SYSTEM_MEANINGFUL_AUDIO_CHUNK",
         "SYSTEM_AUDIO_ENERGY_CHECK",
         "SYSTEM_MICRO_TO_AUDIO",
