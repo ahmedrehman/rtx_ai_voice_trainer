@@ -28,7 +28,15 @@ export type VoiceAgentV2RealtimeEventResult = {
   aiSpeaking?: boolean;
   textDelta?: string;
   textDone?: string;
+  correctionEvent?: VoiceAgentV2RealtimeCorrectionEvent;
   error?: string;
+};
+
+export type VoiceAgentV2RealtimeCorrectionEvent = {
+  correction: 0 | 1 | 2 | 3;
+  text?: string;
+  hint?: string;
+  raw: unknown;
 };
 
 type BrowserAudioContextConstructor = typeof AudioContext;
@@ -216,6 +224,12 @@ export async function VOICE_AGENT_V2_REALTIME_CONNECT(input: {
 
 export function VOICE_AGENT_V2_REALTIME_EVENT_RESULT(event: unknown): VoiceAgentV2RealtimeEventResult {
   const eventType = typeof event === "object" && event && "type" in event ? String((event as { type?: unknown }).type) : "unknown";
+  const correctionEvent = extractCorrectionEvent(event);
+  if (correctionEvent) {
+    return eventType.includes(".delta")
+      ? { type: eventType, correctionEvent, textDelta: correctionEvent.text }
+      : { type: eventType, correctionEvent, textDone: correctionEvent.text };
+  }
   if (eventType === "response.audio.done" || eventType === "response.done" || eventType === "output_audio_buffer.stopped") {
     return { type: eventType, aiSpeaking: false, textDone: extractRealtimeText(event) };
   }
@@ -223,7 +237,8 @@ export function VOICE_AGENT_V2_REALTIME_EVENT_RESULT(event: unknown): VoiceAgent
     return { type: eventType, aiSpeaking: true, textDelta: extractString(event, ["delta", "transcript", "text"]) };
   }
   if (eventType.includes("response.text") || eventType.includes("response.output_text") || eventType.includes("transcript")) {
-    return { type: eventType, textDelta: extractString(event, ["delta", "transcript", "text"]) };
+    const text = extractString(event, ["delta", "transcript", "text"]);
+    return eventType.includes(".done") ? { type: eventType, textDone: text } : { type: eventType, textDelta: text };
   }
   if (eventType === "error") return { type: eventType, error: JSON.stringify(event) };
   return { type: eventType };
@@ -239,6 +254,7 @@ export function VOICE_AGENT_V2_REALTIME_CREATE_INSTRUCTIONS(settings: VoiceAgent
     mode,
     "Reply with spoken audio directly. Keep every answer very short.",
     "Also emit the same short answer as response transcript/text events when available.",
+    "Also include correction fields when available: correction 0 none, 1 small improvement/pronunciation, 2 important improvement, 3 grammar or very wrong; text; optional hint. JSON is preferred, but plain text like \"correction 2: ... hint: ...\" is acceptable.",
     settings.allowFreeChat
       ? "Answer the user's question naturally. Correct only when the user asks for correction or clearly practices the language."
       : "For practice speech, say only one corrected phrase and one tiny hint when useful. If there is no useful correction, stay silent or give a very short confirmation.",
@@ -295,6 +311,124 @@ function extractRealtimeText(value: unknown): string {
   };
   walk(value);
   return found.join(" ").trim();
+}
+
+function extractCorrectionEvent(value: unknown): VoiceAgentV2RealtimeCorrectionEvent | null {
+  const candidates = collectCorrectionCandidates(value);
+  for (const candidate of candidates) {
+    const parsed = parseMaybeJson(candidate);
+    if (parsed && typeof parsed === "object") {
+      const fromRecord = correctionEventFromRecord(parsed as Record<string, unknown>);
+      if (fromRecord) return fromRecord;
+    }
+    if (typeof candidate === "string") {
+      const fromText = correctionEventFromText(candidate);
+      if (fromText) return fromText;
+    }
+  }
+  return null;
+}
+
+function collectCorrectionCandidates(value: unknown) {
+  const candidates: unknown[] = [];
+  const seen = new Set<unknown>();
+  const walk = (item: unknown) => {
+    if (typeof item === "string") {
+      if (isCorrectionTextCandidate(item)) candidates.push(item);
+      return;
+    }
+    if (!item || typeof item !== "object" || seen.has(item)) return;
+    seen.add(item);
+    if (Array.isArray(item)) {
+      item.forEach(walk);
+      return;
+    }
+    const record = item as Record<string, unknown>;
+    if ("correction" in record || "correction_level" in record) candidates.push(record);
+    Object.values(record).forEach(walk);
+  };
+  walk(value);
+  return candidates;
+}
+
+function correctionEventFromRecord(record: Record<string, unknown>): VoiceAgentV2RealtimeCorrectionEvent | null {
+  const correction = normalizeCorrectionLevel(record.correction ?? record.correction_level ?? record.level ?? record.severity);
+  if (correction === null) return null;
+  const text =
+    firstString(record.text, record.chat_text_to_user, record.message, record.answer, record.corrected_text, record.text_corrected) ||
+    undefined;
+  return {
+    correction,
+    text,
+    hint: firstString(record.hint, record.tip, record.conseil) || undefined,
+    raw: record
+  };
+}
+
+function correctionEventFromText(value: string): VoiceAgentV2RealtimeCorrectionEvent | null {
+  const correction = correctionLevelFromText(value);
+  if (correction === null) return null;
+  return {
+    correction,
+    text: cleanCorrectionText(value) || undefined,
+    hint: extractCorrectionHint(value) || undefined,
+    raw: value
+  };
+}
+
+function parseMaybeJson(value: unknown) {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    const match = value.match(/\{[\s\S]*"correction"[\s\S]*\}/);
+    if (!match) return null;
+    try {
+      return JSON.parse(match[0]);
+    } catch {
+      return null;
+    }
+  }
+}
+
+function normalizeCorrectionLevel(value: unknown): 0 | 1 | 2 | 3 | null {
+  if (value === 0 || value === 1 || value === 2 || value === 3) return value;
+  if (value === "0" || value === "1" || value === "2" || value === "3") return Number(value) as 0 | 1 | 2 | 3;
+  if (typeof value === "string") return correctionLevelFromText(value);
+  return null;
+}
+
+function correctionLevelFromText(value: string): 0 | 1 | 2 | 3 | null {
+  const explicit = value.match(/\b(?:correction(?:_level)?|level|severity|niveau)\s*[:=#-]?\s*([0-3])\b/i);
+  if (explicit?.[1]) return Number(explicit[1]) as 0 | 1 | 2 | 3;
+  const text = value.toLowerCase();
+  if (/\b(no correction|none|ok|correct)\b/.test(text)) return 0;
+  if (/\b(grammar|grammaire|spelling|orthographe|very wrong)\b/.test(text)) return 3;
+  if (/\b(vocabulary|vocabulaire|meaning|important improvement|important correction)\b/.test(text)) return 2;
+  if (/\b(pronunciation|prononciation|accent|small improvement|slight improvement)\b/.test(text)) return 1;
+  return null;
+}
+
+function isCorrectionTextCandidate(value: string) {
+  return /\b(correction(?:_level)?|level|severity|niveau|grammar|grammaire|spelling|orthographe|pronunciation|prononciation|accent|vocabulary|vocabulaire|meaning|hint|tip|conseil)\b/i.test(
+    value
+  );
+}
+
+function extractCorrectionHint(value: string) {
+  return value.match(/\b(?:hint|tip|conseil)\s*[:=-]\s*(.+)$/i)?.[1]?.trim() || "";
+}
+
+function cleanCorrectionText(value: string) {
+  const withoutHint = value.replace(/\b(?:hint|tip|conseil)\s*[:=-]\s*.+$/i, "").trim();
+  return withoutHint
+    .replace(/^\s*(?:correction(?:_level)?|level|severity|niveau)\s*[:=#-]?\s*[0-3]\s*[:,-]?\s*/i, "")
+    .replace(/^\s*(?:grammar|grammaire|spelling|orthographe|pronunciation|prononciation|accent|vocabulary|vocabulaire|meaning)\s*[:=-]?\s*/i, "")
+    .trim();
+}
+
+function firstString(...values: unknown[]) {
+  return values.find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim() || "";
 }
 
 function extractString(value: unknown, keys: string[]) {
