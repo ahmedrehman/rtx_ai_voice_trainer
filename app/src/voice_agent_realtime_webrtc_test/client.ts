@@ -102,6 +102,7 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CONNECT_WEBRTC(
   let requireLocalVoice = input.requireLocalVoice;
   let suppressSpeakerFeedback = input.suppressSpeakerFeedback;
   let aiSpeaking = false;
+  let outgoingTrack: MediaStreamTrack | null = null;
 
   function state(): RealtimeWebrtcConnectionState {
     return {
@@ -126,15 +127,15 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CONNECT_WEBRTC(
 
   function updateOutgoingMicTrack() {
     const enabled = outgoingMicEnabled();
-    input.stream.getAudioTracks().forEach((track) => {
-      track.enabled = enabled;
-    });
+    if (outgoingTrack) outgoingTrack.enabled = enabled;
     input.onState?.(state());
   }
 
   function stop() {
     dataChannel?.close();
     peer?.close();
+    outgoingTrack?.stop();
+    outgoingTrack = null;
     dataChannel = null;
     peer = null;
     input.onState?.(state());
@@ -150,7 +151,8 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CONNECT_WEBRTC(
     };
     const [audioTrack] = input.stream.getAudioTracks();
     if (!audioTrack) throw new Error("Microphone stream has no audio track.");
-    peer.addTrack(audioTrack, input.stream);
+    outgoingTrack = audioTrack.clone();
+    peer.addTrack(outgoingTrack, new MediaStream([outgoingTrack]));
 
     dataChannel = peer.createDataChannel("oai-events");
     dataChannel.onopen = () => input.onState?.(state());

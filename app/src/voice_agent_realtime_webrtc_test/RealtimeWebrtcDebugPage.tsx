@@ -114,7 +114,7 @@ export function VoiceAgentRealtimeWebrtcDebugPage({ settings }: { settings: Voic
           setDataChannelState(state.dataChannelState);
           setMicSentToAi(state.outgoingMicEnabled);
           setMicSendReason(state.outgoingMicReason);
-          if (state.peerState === "connected") setConnectionState("connected");
+          if (state.peerState === "connected" || state.dataChannelState === "open") setConnectionState("connected");
           if (state.peerState === "failed") setConnectionState("error");
           if (state.peerState === "closed") setConnectionState("idle");
         }
