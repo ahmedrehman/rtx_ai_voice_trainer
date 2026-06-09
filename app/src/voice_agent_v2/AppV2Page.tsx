@@ -137,7 +137,7 @@ export function VoiceAgentV2AppPage({
               {VOICE_AGENT_V2_TOPIC_PRESETS.map((topic) => <option value={topic.id} key={topic.id}>{topic.label}</option>)}
             </select>
           </label>
-          <button className="toggle" type="button" onClick={toggleListen}>{listenOn ? "Listen on" : "Listen"}</button>
+          <button className="toggle" type="button" onClick={toggleListen}>{listenOn ? "Listen on" : "Listen off"}</button>
           <button className="toggle" type="button" onClick={() => setSpeakOn((current) => !current)}>{speakOn ? "Speak on" : "Speak off"}</button>
           {speakOn && (
             <label className="topic-select">
