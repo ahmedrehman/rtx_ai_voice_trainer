@@ -150,6 +150,7 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
     stream: MediaStream;
     threshold?: number;
     silenceMs?: number;
+    preBufferMs?: number;
     maxWaitMs?: number;
     maxRecordMs?: number;
     minVoiceMs?: number;
@@ -162,6 +163,7 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
   const method = "VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT";
   const threshold = input.threshold ?? 0.025;
   const silenceMs = input.silenceMs ?? 650;
+  const preBufferMs = Math.max(0, input.preBufferMs ?? 1000);
   const maxWaitMs = input.maxWaitMs ?? 8000;
   const maxRecordMs = input.maxRecordMs ?? 6000;
   const minVoiceMs = input.minVoiceMs ?? 180;
@@ -174,9 +176,11 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
   let sampleCount = 0;
   let mimeType = input.mimeType || "";
   let size = 0;
+  let speechStartedAfterMs = 0;
+  let preBufferIncludedMs = 0;
+  let preBufferChunks = 0;
 
   try {
-    if (typeof MediaRecorder === "undefined") throw new Error("Browser MediaRecorder API is unavailable.");
     const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextConstructor) throw new Error("Browser AudioContext is unavailable.");
     const context = new AudioContextConstructor();
@@ -184,34 +188,64 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
     const analyser = context.createAnalyser();
     analyser.fftSize = 1024;
     source.connect(analyser);
+    const processor = context.createScriptProcessor(2048, 1, 1);
+    const mutedOutput = context.createGain();
+    mutedOutput.gain.value = 0;
+    source.connect(processor);
+    processor.connect(mutedOutput);
+    mutedOutput.connect(context.destination);
     const samples = new Uint8Array(analyser.fftSize);
-    const recorderMimeType = chooseMediaRecorderMimeType(input.mimeType);
-    let recorder: MediaRecorder | null = null;
-    const chunks: Blob[] = [];
-    let recordingStartedMs = 0;
+    type AudioChunk = { samples: Float32Array; startedAtMs: number; durationMs: number };
+    let preBuffer: AudioChunk[] = [];
+    let recordingChunks: AudioChunk[] = [];
+    let speechStartedMs = 0;
     let lastVoiceMs = 0;
     let sawVoice = false;
+    let recording = false;
     let stopped = false;
 
-    const audio = await new Promise<Blob | null>((resolve, reject) => {
+    mimeType = "audio/wav";
+
+    const audio = await new Promise<Blob | null>((resolve) => {
       const finish = (value: Blob | null) => {
         if (stopped) return;
         stopped = true;
         window.clearInterval(timer);
+        processor.onaudioprocess = null;
+        processor.disconnect();
+        mutedOutput.disconnect();
         source.disconnect();
         void context.close().catch(() => undefined);
         resolve(value);
       };
-      const stopRecorder = () => {
-        if (recorder?.state === "recording") {
-          recorder.stop();
+      const stopRecording = () => {
+        if (!recording) {
+          finish(null);
           return;
         }
-        finish(null);
+        const blob = createWavBlob(recordingChunks.map((chunk) => chunk.samples), context.sampleRate);
+        size = blob.size;
+        finish(blob);
+      };
+      processor.onaudioprocess = (event) => {
+        if (stopped) return;
+        const inputChannel = event.inputBuffer.getChannelData(0);
+        const copied = new Float32Array(inputChannel.length);
+        copied.set(inputChannel);
+        const duration = (copied.length / context.sampleRate) * 1000;
+        const now = Date.now();
+        const chunk = { samples: copied, startedAtMs: now - duration, durationMs: duration };
+        if (recording) {
+          recordingChunks.push(chunk);
+          return;
+        }
+        preBuffer.push(chunk);
+        const earliest = now - preBufferMs;
+        preBuffer = preBuffer.filter((candidate) => candidate.startedAtMs + candidate.durationMs >= earliest);
       };
       const timer = window.setInterval(() => {
         if (input.shouldStop?.()) {
-          stopRecorder();
+          stopRecording();
           return;
         }
         analyser.getByteTimeDomainData(samples);
@@ -225,33 +259,28 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
         if (voiceDetected) {
           sawVoice = true;
           lastVoiceMs = now;
-          if (recorder) voiceActiveMs += sampleEveryMs;
-          if (!recorder) {
-            recorder = new MediaRecorder(input.stream, recorderMimeType ? { mimeType: recorderMimeType } : undefined);
-            mimeType = recorder.mimeType || recorderMimeType || "audio/webm";
-            recordingStartedMs = now;
-            recorder.ondataavailable = (event) => {
-              if (event.data.size > 0) chunks.push(event.data);
-            };
-            recorder.onerror = () => reject(new Error("Browser audio segment recording failed."));
-            recorder.onstop = () => {
-              const blob = new Blob(chunks, { type: mimeType });
-              size = blob.size;
-              finish(blob);
-            };
-            recorder.start(250);
+          voiceActiveMs += sampleEveryMs;
+          if (!recording) {
+            recording = true;
+            speechStartedMs = now;
+            speechStartedAfterMs = now - startedMs;
+            const earliest = now - preBufferMs;
+            const included = preBuffer.filter((chunk) => chunk.startedAtMs + chunk.durationMs >= earliest);
+            recordingChunks = included.slice();
+            preBufferChunks = included.length;
+            preBufferIncludedMs = Math.round(included.reduce((total, chunk) => total + chunk.durationMs, 0));
           }
         }
-        if (!recorder && now - startedMs >= maxWaitMs) {
+        if (!recording && now - startedMs >= maxWaitMs) {
           finish(null);
           return;
         }
-        if (recorder && now - recordingStartedMs >= maxRecordMs) {
-          stopRecorder();
+        if (recording && now - speechStartedMs >= maxRecordMs) {
+          stopRecording();
           return;
         }
-        if (recorder && sawVoice && now - lastVoiceMs >= silenceMs) {
-          stopRecorder();
+        if (recording && sawVoice && now - lastVoiceMs >= silenceMs) {
+          stopRecording();
         }
       }, sampleEveryMs);
     });
@@ -261,10 +290,14 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
       return voiceSegmentOutput(startedAt, "skip_no_voice", null, {
         threshold,
         silenceMs,
+        preBufferMs,
         maxWaitMs,
         maxRecordMs,
         minVoiceMs,
         voiceActiveMs,
+        speechStartedAfterMs,
+        preBufferIncludedMs,
+        preBufferChunks,
         durationMs,
         maxRms,
         averageRms: averageRms(totalRms, sampleCount),
@@ -277,10 +310,14 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
       return voiceSegmentOutput(startedAt, "skip_empty_audio", null, {
         threshold,
         silenceMs,
+        preBufferMs,
         maxWaitMs,
         maxRecordMs,
         minVoiceMs,
         voiceActiveMs,
+        speechStartedAfterMs,
+        preBufferIncludedMs,
+        preBufferChunks,
         durationMs,
         maxRms,
         averageRms: averageRms(totalRms, sampleCount),
@@ -293,10 +330,14 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
       return voiceSegmentOutput(startedAt, "skip_too_short", audio, {
         threshold,
         silenceMs,
+        preBufferMs,
         maxWaitMs,
         maxRecordMs,
         minVoiceMs,
         voiceActiveMs,
+        speechStartedAfterMs,
+        preBufferIncludedMs,
+        preBufferChunks,
         durationMs,
         maxRms,
         averageRms: averageRms(totalRms, sampleCount),
@@ -308,10 +349,14 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
     return voiceSegmentOutput(startedAt, "send_voice_segment", audio, {
       threshold,
       silenceMs,
+      preBufferMs,
       maxWaitMs,
       maxRecordMs,
       minVoiceMs,
       voiceActiveMs,
+      speechStartedAfterMs,
+      preBufferIncludedMs,
+      preBufferChunks,
       durationMs,
       maxRms,
       averageRms: averageRms(totalRms, sampleCount),
@@ -328,10 +373,14 @@ export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
       debug: {
         threshold,
         silenceMs,
+        preBufferMs,
         maxWaitMs,
         maxRecordMs,
         minVoiceMs,
         voiceActiveMs,
+        speechStartedAfterMs,
+        preBufferIncludedMs,
+        preBufferChunks,
         durationMs: Date.now() - startedMs,
         maxRms,
         averageRms: averageRms(totalRms, sampleCount),
@@ -596,6 +645,53 @@ function audioRms(samples: Uint8Array) {
 
 function averageRms(totalRms: number, sampleCount: number) {
   return Number((sampleCount ? totalRms / sampleCount : 0).toFixed(4));
+}
+
+function createWavBlob(chunks: Float32Array[], sampleRate: number) {
+  const totalSamples = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const bytesPerSample = 2;
+  const dataSize = totalSamples * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  let offset = 0;
+  writeAscii(view, offset, "RIFF");
+  offset += 4;
+  view.setUint32(offset, 36 + dataSize, true);
+  offset += 4;
+  writeAscii(view, offset, "WAVE");
+  offset += 4;
+  writeAscii(view, offset, "fmt ");
+  offset += 4;
+  view.setUint32(offset, 16, true);
+  offset += 4;
+  view.setUint16(offset, 1, true);
+  offset += 2;
+  view.setUint16(offset, 1, true);
+  offset += 2;
+  view.setUint32(offset, sampleRate, true);
+  offset += 4;
+  view.setUint32(offset, sampleRate * bytesPerSample, true);
+  offset += 4;
+  view.setUint16(offset, bytesPerSample, true);
+  offset += 2;
+  view.setUint16(offset, 16, true);
+  offset += 2;
+  writeAscii(view, offset, "data");
+  offset += 4;
+  view.setUint32(offset, dataSize, true);
+  offset += 4;
+  for (const chunk of chunks) {
+    for (let index = 0; index < chunk.length; index += 1) {
+      const sample = Math.max(-1, Math.min(1, chunk[index]));
+      view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function writeAscii(view: DataView, offset: number, value: string) {
+  for (let index = 0; index < value.length; index += 1) view.setUint8(offset + index, value.charCodeAt(index));
 }
 
 function voiceSegmentOutput(
