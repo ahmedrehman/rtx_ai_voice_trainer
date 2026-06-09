@@ -876,46 +876,6 @@ audio {
   border-left-color: #3b9d5a;
 }
 
-.debug-send-lamp {
-  display: grid;
-  grid-template-columns: 14px 1fr auto;
-  gap: 4px 8px;
-  align-items: center;
-  min-width: 0;
-  padding: 8px;
-  border-radius: 8px;
-  border-left: 5px solid #b00020;
-  background: #fff4f4;
-}
-
-.debug-send-lamp.active {
-  border-left-color: #16833a;
-  background: #f0fff4;
-}
-
-.debug-send-lamp-light {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-  background: #b00020;
-  box-shadow: 0 0 0 3px rgba(176, 0, 32, 0.12);
-}
-
-.debug-send-lamp.active .debug-send-lamp-light {
-  background: #16833a;
-  box-shadow: 0 0 0 3px rgba(22, 131, 58, 0.14);
-}
-
-.debug-send-lamp p {
-  grid-column: 1 / -1;
-  font-size: 0.85rem;
-}
-
-.debug-send-lamp span:last-of-type {
-  font-size: 0.78rem;
-  font-weight: 900;
-}
-
 .step.running {
   border-left-color: #1f6feb;
 }
