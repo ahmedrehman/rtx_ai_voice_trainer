@@ -1,5 +1,6 @@
 import type {
   AudioRoundtripRecordOutput,
+  AudioRoundtripVoiceSegmentOutput,
   AudioRoundtripServerOutput,
   RealtimeWebrtcConfig,
   RealtimeWebrtcConnection,
@@ -138,6 +139,205 @@ export async function VOICE_AGENT_REALTIME_BROWSER_RECORD_AUDIO_SAMPLE(
         durationMs,
         mimeType: input.mimeType || "",
         size: 0
+      }
+    };
+  }
+}
+
+export async function VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT(
+  config: RealtimeWebrtcConfig,
+  input: {
+    stream: MediaStream;
+    threshold?: number;
+    silenceMs?: number;
+    maxWaitMs?: number;
+    maxRecordMs?: number;
+    minVoiceMs?: number;
+    mimeType?: string;
+    onSample?: (sample: RealtimeWebrtcMicMonitorSample) => void;
+    shouldStop?: () => boolean;
+  }
+): Promise<AudioRoundtripVoiceSegmentOutput> {
+  const startedAt = new Date().toISOString();
+  const method = "VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT";
+  const threshold = input.threshold ?? 0.025;
+  const silenceMs = input.silenceMs ?? 650;
+  const maxWaitMs = input.maxWaitMs ?? 8000;
+  const maxRecordMs = input.maxRecordMs ?? 6000;
+  const minVoiceMs = input.minVoiceMs ?? 180;
+  const sampleEveryMs = 50;
+  const startedMs = Date.now();
+  let voiceActiveMs = 0;
+  let durationMs = 0;
+  let maxRms = 0;
+  let totalRms = 0;
+  let sampleCount = 0;
+  let mimeType = input.mimeType || "";
+  let size = 0;
+
+  try {
+    if (typeof MediaRecorder === "undefined") throw new Error("Browser MediaRecorder API is unavailable.");
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextConstructor) throw new Error("Browser AudioContext is unavailable.");
+    const context = new AudioContextConstructor();
+    const source = context.createMediaStreamSource(input.stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    const recorderMimeType = chooseMediaRecorderMimeType(input.mimeType);
+    let recorder: MediaRecorder | null = null;
+    const chunks: Blob[] = [];
+    let recordingStartedMs = 0;
+    let lastVoiceMs = 0;
+    let sawVoice = false;
+    let stopped = false;
+
+    const audio = await new Promise<Blob | null>((resolve, reject) => {
+      const finish = (value: Blob | null) => {
+        if (stopped) return;
+        stopped = true;
+        window.clearInterval(timer);
+        source.disconnect();
+        void context.close().catch(() => undefined);
+        resolve(value);
+      };
+      const stopRecorder = () => {
+        if (recorder?.state === "recording") {
+          recorder.stop();
+          return;
+        }
+        finish(null);
+      };
+      const timer = window.setInterval(() => {
+        if (input.shouldStop?.()) {
+          stopRecorder();
+          return;
+        }
+        analyser.getByteTimeDomainData(samples);
+        const rms = audioRms(samples);
+        sampleCount += 1;
+        totalRms += rms;
+        maxRms = Math.max(maxRms, rms);
+        const voiceDetected = rms >= threshold;
+        input.onSample?.({ rms, voiceDetected });
+        const now = Date.now();
+        if (voiceDetected) {
+          sawVoice = true;
+          lastVoiceMs = now;
+          if (recorder) voiceActiveMs += sampleEveryMs;
+          if (!recorder) {
+            recorder = new MediaRecorder(input.stream, recorderMimeType ? { mimeType: recorderMimeType } : undefined);
+            mimeType = recorder.mimeType || recorderMimeType || "audio/webm";
+            recordingStartedMs = now;
+            recorder.ondataavailable = (event) => {
+              if (event.data.size > 0) chunks.push(event.data);
+            };
+            recorder.onerror = () => reject(new Error("Browser audio segment recording failed."));
+            recorder.onstop = () => {
+              const blob = new Blob(chunks, { type: mimeType });
+              size = blob.size;
+              finish(blob);
+            };
+            recorder.start(250);
+          }
+        }
+        if (!recorder && now - startedMs >= maxWaitMs) {
+          finish(null);
+          return;
+        }
+        if (recorder && now - recordingStartedMs >= maxRecordMs) {
+          stopRecorder();
+          return;
+        }
+        if (recorder && sawVoice && now - lastVoiceMs >= silenceMs) {
+          stopRecorder();
+        }
+      }, sampleEveryMs);
+    });
+
+    durationMs = Date.now() - startedMs;
+    if (!audio) {
+      return voiceSegmentOutput(startedAt, "skip_no_voice", null, {
+        threshold,
+        silenceMs,
+        maxWaitMs,
+        maxRecordMs,
+        minVoiceMs,
+        voiceActiveMs,
+        durationMs,
+        maxRms,
+        averageRms: averageRms(totalRms, sampleCount),
+        mimeType,
+        size,
+        reason: input.shouldStop?.() ? "Stopped by user before a voice segment was completed." : "No voice crossed the threshold before maxWaitMs."
+      });
+    }
+    if (audio.size <= 0) {
+      return voiceSegmentOutput(startedAt, "skip_empty_audio", null, {
+        threshold,
+        silenceMs,
+        maxWaitMs,
+        maxRecordMs,
+        minVoiceMs,
+        voiceActiveMs,
+        durationMs,
+        maxRms,
+        averageRms: averageRms(totalRms, sampleCount),
+        mimeType: audio.type,
+        size: audio.size,
+        reason: "Recorder produced an empty audio blob."
+      });
+    }
+    if (voiceActiveMs < minVoiceMs) {
+      return voiceSegmentOutput(startedAt, "skip_too_short", audio, {
+        threshold,
+        silenceMs,
+        maxWaitMs,
+        maxRecordMs,
+        minVoiceMs,
+        voiceActiveMs,
+        durationMs,
+        maxRms,
+        averageRms: averageRms(totalRms, sampleCount),
+        mimeType: audio.type,
+        size: audio.size,
+        reason: "Voice activity was too short to send."
+      });
+    }
+    return voiceSegmentOutput(startedAt, "send_voice_segment", audio, {
+      threshold,
+      silenceMs,
+      maxWaitMs,
+      maxRecordMs,
+      minVoiceMs,
+      voiceActiveMs,
+      durationMs,
+      maxRms,
+      averageRms: averageRms(totalRms, sampleCount),
+      mimeType: audio.type,
+      size: audio.size,
+      reason: "Voice activity crossed the threshold and the segment ended after silence."
+    });
+  } catch (error) {
+    log(config, "error", method, errorMessage(error));
+    return {
+      status: errorStatus(method, startedAt, error),
+      decision: "skip_empty_audio",
+      audio: null,
+      debug: {
+        threshold,
+        silenceMs,
+        maxWaitMs,
+        maxRecordMs,
+        minVoiceMs,
+        voiceActiveMs,
+        durationMs: Date.now() - startedMs,
+        maxRms,
+        averageRms: averageRms(totalRms, sampleCount),
+        mimeType,
+        size,
+        reason: errorMessage(error)
       }
     };
   }
@@ -392,6 +592,24 @@ function audioRms(samples: Uint8Array) {
     sum += centered * centered;
   }
   return Number(Math.sqrt(sum / samples.length).toFixed(4));
+}
+
+function averageRms(totalRms: number, sampleCount: number) {
+  return Number((sampleCount ? totalRms / sampleCount : 0).toFixed(4));
+}
+
+function voiceSegmentOutput(
+  startedAt: string,
+  decision: AudioRoundtripVoiceSegmentOutput["decision"],
+  audio: Blob | null,
+  debug: AudioRoundtripVoiceSegmentOutput["debug"]
+): AudioRoundtripVoiceSegmentOutput {
+  return {
+    status: doneStatus("VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT", startedAt),
+    decision,
+    audio,
+    debug
+  };
 }
 
 function doneStatus(method: string, startedAt: string): RealtimeWebrtcStatus {

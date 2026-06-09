@@ -4,7 +4,7 @@ export const VOICE_AGENT_REALTIME_WEBRTC_DEBUG_PAGE: DebugPageDefinition = {
   id: "VOICE_AGENT_REALTIME_WEBRTC_TEST",
   title: "Voice agent realtime WebRTC",
   module: "voice_agent_realtime_webrtc_test",
-  role: "two audio trips: browser microphone -> server -> browser playback, or browser microphone -> realtime AI -> browser playback",
+  role: "two audio trips: AI off automatically sends/skips voice segments to server echo and auto-plays returned audio; AI on uses realtime AI audio",
   ready: true,
   inputs: [
     {
@@ -48,8 +48,8 @@ export const VOICE_AGENT_REALTIME_WEBRTC_DEBUG_PAGE: DebugPageDefinition = {
   output: [
     "microphone permission result",
     "local voice/no voice indicator",
-    "server audio roundtrip request/response",
-    "server-returned audio playback",
+    "automatic server audio roundtrip SEND/SKIP decisions",
+    "server-returned audio autoplay",
     "send-to-AI gate state",
     "speaker feedback suppression state",
     "WebRTC connection state",

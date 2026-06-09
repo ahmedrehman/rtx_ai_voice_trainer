@@ -39,6 +39,32 @@ export type AudioRoundtripRecordOutput = {
   };
 };
 
+export type AudioRoundtripVoiceSegmentDecision =
+  | "send_voice_segment"
+  | "skip_no_voice"
+  | "skip_too_short"
+  | "skip_empty_audio";
+
+export type AudioRoundtripVoiceSegmentOutput = {
+  status: RealtimeWebrtcStatus;
+  decision: AudioRoundtripVoiceSegmentDecision;
+  audio: Blob | null;
+  debug: {
+    threshold: number;
+    silenceMs: number;
+    maxWaitMs: number;
+    maxRecordMs: number;
+    minVoiceMs: number;
+    voiceActiveMs: number;
+    durationMs: number;
+    maxRms: number;
+    averageRms: number;
+    mimeType: string;
+    size: number;
+    reason: string;
+  };
+};
+
 export type AudioRoundtripServerOutput = {
   status: RealtimeWebrtcStatus;
   audio: Blob | null;

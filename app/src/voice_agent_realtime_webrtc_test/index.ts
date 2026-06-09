@@ -2,6 +2,7 @@ export { VOICE_AGENT_REALTIME_WEBRTC_DEBUG_PAGE } from "./realtime_webrtc.debug"
 export { VoiceAgentRealtimeWebrtcDebugPage } from "./RealtimeWebrtcDebugPage";
 export {
   VOICE_AGENT_REALTIME_BROWSER_CONNECT_WEBRTC,
+  VOICE_AGENT_REALTIME_BROWSER_CAPTURE_VOICE_SEGMENT,
   VOICE_AGENT_REALTIME_BROWSER_MONITOR_MIC_LEVEL,
   VOICE_AGENT_REALTIME_BROWSER_OPEN_MICROPHONE,
   VOICE_AGENT_REALTIME_BROWSER_RECORD_AUDIO_SAMPLE,
@@ -23,6 +24,8 @@ export {
 export type {
   AudioRoundtripRecordOutput,
   AudioRoundtripServerOutput,
+  AudioRoundtripVoiceSegmentDecision,
+  AudioRoundtripVoiceSegmentOutput,
   RealtimeWebrtcConfig,
   RealtimeWebrtcConnection,
   RealtimeWebrtcConnectionInput,
