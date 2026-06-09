@@ -18,6 +18,9 @@ import { SERVER_AI_VOICE_DEBUG_PAGES } from "./lib_server_ai_voice_test";
 import { VOICE_AGENT_FRONTEND_DEBUG_PAGES } from "./voice_agent_frontend_test";
 import { VoiceAgentFrontendTestPage } from "./voice_agent_frontend_test/pages";
 import { VOICE_AGENT_REALTIME_WEBRTC_DEBUG_PAGE, VoiceAgentRealtimeWebrtcDebugPage } from "./voice_agent_realtime_webrtc_test";
+import { VoiceAgentV2AppPage, VoiceAgentV2ConfigPage } from "./voice_agent_v2/AppV2Page";
+import { APP_V2_DEBUG_PAGE } from "./voice_agent_v2/debug";
+import { VOICE_AGENT_V2_DEFAULT_SETTINGS, type VoiceAgentV2Settings } from "./voice_agent_v2";
 import { AUDIO_ANALYSER_DEFAULT_PROMPTS, createAudioAnalyserDefaultPrompts } from "./lib_server_ai_voice/audioAnalyserPrompts";
 import { AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS, createAudioTurnDefaultPrompts } from "./lib_server_ai_voice/audioTurnPrompts";
 import {
@@ -65,6 +68,7 @@ const DEFAULT_TEST_AUDIO_URL = "/test-audio/sample-voice-test.wav";
 const pages: Page[] = [
   { id: "APP_CHAT", title: "App", module: "App", role: "voice trainer chat with listen and speak controls", ready: true, inputs: [], actions: [], output: [], icon: MessageSquare },
   { id: "VOICE_AGENT_CONFIG", title: "Voice agent config", module: "App", role: "client topic and prompt configuration", ready: true, inputs: [], actions: [], output: [], icon: Server },
+  { ...APP_V2_DEBUG_PAGE, icon: iconForPage(APP_V2_DEBUG_PAGE) },
   ...VOICE_AGENT_FRONTEND_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
   { ...VOICE_AGENT_REALTIME_WEBRTC_DEBUG_PAGE, icon: iconForPage(VOICE_AGENT_REALTIME_WEBRTC_DEBUG_PAGE) },
   ...CLIENT_VOICE_SYSTEM_DEBUG_PAGES.map((page) => ({ ...page, icon: iconForPage(page) })),
@@ -73,6 +77,7 @@ const pages: Page[] = [
 ];
 
 function iconForPage(page: DebugPageDefinition) {
+  if (page.module === "app_v2_test") return MessageSquare;
   if (page.id === "MICROPHONE_AUDIO_REQUIREMENTS") return BookOpen;
   if (page.module === "voice_agent_realtime_webrtc_test") return Volume2;
   if (page.module === "voice_agent_frontend_test") return MessageSquare;
@@ -88,6 +93,7 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [debugMenuOpen, setDebugMenuOpen] = useState(false);
   const [voiceAgentSettings, setVoiceAgentSettings] = useState<VoiceAgentSettings>(VOICE_AGENT_DEFAULT_SETTINGS);
+  const [voiceAgentV2Settings, setVoiceAgentV2Settings] = useState<VoiceAgentV2Settings>(VOICE_AGENT_V2_DEFAULT_SETTINGS);
   const activePage = pages.find((page) => page.id === activePageId) || pages[0];
   const debugGroups = useMemo(() => {
     return pages.filter((page) => page.module !== "App").reduce<Record<string, Page[]>>((result, page) => {
@@ -167,7 +173,13 @@ function App() {
       </aside>
 
       <section className="workspace">
-        <PageView page={activePage} voiceAgentSettings={voiceAgentSettings} setVoiceAgentSettings={setVoiceAgentSettings} />
+        <PageView
+          page={activePage}
+          voiceAgentSettings={voiceAgentSettings}
+          setVoiceAgentSettings={setVoiceAgentSettings}
+          voiceAgentV2Settings={voiceAgentV2Settings}
+          setVoiceAgentV2Settings={setVoiceAgentV2Settings}
+        />
       </section>
     </main>
   );
@@ -176,17 +188,21 @@ function App() {
 function PageView({
   page,
   voiceAgentSettings,
-  setVoiceAgentSettings
+  setVoiceAgentSettings,
+  voiceAgentV2Settings,
+  setVoiceAgentV2Settings
 }: {
   page: Page;
   voiceAgentSettings: VoiceAgentSettings;
   setVoiceAgentSettings: React.Dispatch<React.SetStateAction<VoiceAgentSettings>>;
+  voiceAgentV2Settings: VoiceAgentV2Settings;
+  setVoiceAgentV2Settings: React.Dispatch<React.SetStateAction<VoiceAgentV2Settings>>;
 }) {
   const Icon = page.icon;
   if (page.id === "APP_CHAT") {
     return (
       <article className="page app-page">
-        <AppVoiceExperience debug={false} settings={voiceAgentSettings} setSettings={setVoiceAgentSettings} />
+        <VoiceAgentV2AppPage settings={voiceAgentV2Settings} setSettings={setVoiceAgentV2Settings} />
       </article>
     );
   }
@@ -206,8 +222,9 @@ function PageView({
           renderFullAppTest={() => <AppVoiceExperience debug settings={voiceAgentSettings} setSettings={setVoiceAgentSettings} />}
         />
       )}
+      {page.module === "app_v2_test" && <VoiceAgentV2AppPage debug settings={voiceAgentV2Settings} setSettings={setVoiceAgentV2Settings} />}
       {page.module === "voice_agent_realtime_webrtc_test" && <VoiceAgentRealtimeWebrtcDebugPage settings={voiceAgentSettings} />}
-      {page.id === "VOICE_AGENT_CONFIG" && <VoiceAgentConfigPage settings={voiceAgentSettings} setSettings={setVoiceAgentSettings} />}
+      {page.id === "VOICE_AGENT_CONFIG" && <VoiceAgentV2ConfigPage settings={voiceAgentV2Settings} setSettings={setVoiceAgentV2Settings} />}
       {page.id === "MICROPHONE_AUDIO_REQUIREMENTS" && <MicrophoneDocs />}
       {page.id === "SYSTEM_MEANINGFUL_AUDIO_CHUNK" && <MeaningfulAudioChunkDebug />}
       {page.id === "SYSTEM_AUDIO_ENERGY_CHECK" && <AudioEnergyCheckDebug />}
@@ -221,6 +238,7 @@ function PageView({
         "MICROPHONE_AUDIO_REQUIREMENTS",
         "APP_CHAT",
         "APP_FULL_TEST",
+        "APP_V2_TEST",
         "VOICE_AGENT_CONFIG",
         "VOICE_AGENT_TEXT_CHAT_TEST",
         "VOICE_AGENT_STREAM_TEXT_CHAT_TEST",
