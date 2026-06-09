@@ -38,12 +38,22 @@ export function VoiceAgentV2AppPage({
   const [technical, setTechnical] = useState<VoiceAgentV2TurnResult | VoiceAgentV2VoiceSegment | { status: unknown } | null>(null);
   const [latestSegment, setLatestSegment] = useState<VoiceAgentV2VoiceSegment | null>(null);
   const messagesRef = useRef(messages);
+  const settingsRef = useRef(settings);
+  const speakOnRef = useRef(speakOn);
   const stopListenRef = useRef(false);
   const listenLoopRef = useRef(false);
 
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    settingsRef.current = settings;
+  }, [settings]);
+
+  useEffect(() => {
+    speakOnRef.current = speakOn;
+  }, [speakOn]);
 
   useEffect(() => {
     return () => {
@@ -106,10 +116,10 @@ export function VoiceAgentV2AppPage({
           setLatestSegment(segment);
           if (segment.decision === "send_voice_segment" && segment.audio) {
             const result = await VOICE_AGENT_V2_ANALYSE_AUDIO({
-              settings,
+              settings: settingsRef.current,
               audio: segment.audio,
               visibleHistory: VOICE_AGENT_V2_VISIBLE_HISTORY(messagesRef.current),
-              speakEnabled: speakOn
+              speakEnabled: speakOnRef.current
             });
             applyTurn(result);
           }
@@ -144,7 +154,7 @@ export function VoiceAgentV2AppPage({
       audioUrl: result.audio?.url,
       correctionLevel: result.correctionLevel
     }].slice(-40));
-    if (speakOn && result.audio) void new Audio(result.audio.url).play().catch(() => undefined);
+    if (speakOnRef.current && result.audio) void new Audio(result.audio.url).play().catch(() => undefined);
   }
 
   function changeTopic(topicId: VoiceAgentTopicId) {
@@ -163,8 +173,8 @@ export function VoiceAgentV2AppPage({
               {VOICE_AGENT_V2_TOPIC_PRESETS.map((topic) => <option value={topic.id} key={topic.id}>{topic.label}</option>)}
             </select>
           </label>
-          <button className="toggle" type="button" onClick={toggleListen}>{listenOn ? "Listen on" : "Listen off"}</button>
-          <button className="toggle" type="button" onClick={() => setSpeakOn((current) => !current)}>{speakOn ? "Speak on" : "Speak off"}</button>
+          <button className={listenOn ? "toggle active" : "toggle"} type="button" onClick={toggleListen}>{listenOn ? "Listen on" : "Listen off"}</button>
+          <button className={speakOn ? "toggle active" : "toggle"} type="button" onClick={() => setSpeakOn((current) => !current)}>{speakOn ? "Speak on" : "Speak off"}</button>
           {speakOn && (
             <label className="topic-select">
               <span>Level</span>
