@@ -1,5 +1,4 @@
 import {
-  VOICE_AGENT_ANALYSE_AUDIO,
   VOICE_AGENT_CREATE_SETTINGS,
   VOICE_AGENT_SEND_TEXT_CHAT,
   VOICE_AGENT_TOPIC_PRESETS,
@@ -8,12 +7,6 @@ import {
   type VoiceAgentSettings,
   type VoiceAgentTopicId
 } from "../voice_agent";
-import type { AudioAnalyserOutput } from "../lib_server_ai_voice";
-export {
-  VOICE_AGENT_V2_CAPTURE_VOICE_SEGMENT,
-  VOICE_AGENT_V2_OPEN_MICROPHONE,
-  type VoiceAgentV2VoiceSegment
-} from "./capture";
 
 export type VoiceAgentV2CorrectionLevel = 0 | 1 | 2 | 3;
 export type VoiceAgentV2Signal = "green" | "yellow" | "orange" | "red";
@@ -110,31 +103,6 @@ export function VOICE_AGENT_V2_CREATE_PROMPTS(settings: VoiceAgentV2Settings): V
   };
 }
 
-export async function VOICE_AGENT_V2_ANALYSE_AUDIO(input: {
-  settings: VoiceAgentV2Settings;
-  audio: Blob;
-  visibleHistory: VoiceAgentV2VisibleHistoryItem[];
-  speakEnabled: boolean;
-}) {
-  const promptConfig = VOICE_AGENT_V2_CREATE_PROMPTS(input.settings);
-  const history = input.settings.allowFreeChat ? VOICE_AGENT_V2_VISIBLE_HISTORY_TEXT(input.visibleHistory) : [];
-  const result = await VOICE_AGENT_ANALYSE_AUDIO({
-    settings: legacySettings(input.settings, promptConfig),
-    audio: input.audio,
-    textUserChat: "",
-    history5LastTextChats: history,
-    speakEnabled: false
-  });
-  return finalizeTurn({
-    settings: input.settings,
-    promptConfig,
-    history,
-    speakEnabled: input.speakEnabled,
-    chatMessage: result.chatMessage,
-    response: result.response
-  });
-}
-
 export async function VOICE_AGENT_V2_SEND_TEXT(input: {
   settings: VoiceAgentV2Settings;
   text: string;
@@ -204,14 +172,8 @@ async function finalizeTurn(input: {
   response: unknown;
 }): Promise<VoiceAgentV2TurnResult> {
   const correctionLevel = VOICE_AGENT_V2_CORRECTION_LEVEL(input.response);
-  const shouldKeepAudio = Boolean(correctionLevel >= input.settings.speakLevel && VOICE_AGENT_V2_CHAT_TEXT(input.response).trim());
-  const audio = shouldKeepAudio
-    ? await VOICE_AGENT_V2_TEXT_TO_SPEECH({
-        text: VOICE_AGENT_V2_CHAT_TEXT(input.response),
-        settings: input.settings,
-        promptConfig: input.promptConfig
-      }).catch(() => null)
-    : null;
+  const shouldKeepAudio = false;
+  const audio = null;
   return {
     status: { ok: true },
     chatMessage: input.chatMessage,
@@ -223,30 +185,10 @@ async function finalizeTurn(input: {
     debug: {
       promptConfig: input.promptConfig,
       historySent: input.history,
-      speakDecision: shouldKeepAudio
-        ? input.speakEnabled ? `AUTO_PLAY_AUDIO_LEVEL_${correctionLevel}` : `KEEP_AUDIO_LINK_LEVEL_${correctionLevel}`
-        : `TEXT_ONLY_LEVEL_${correctionLevel}`,
+      speakDecision: input.speakEnabled ? `REALTIME_AUDIO_ONLY_FOR_VOICE_TEXT_ONLY_LEVEL_${correctionLevel}` : `TEXT_ONLY_LEVEL_${correctionLevel}`,
       correctionEvent: { correction: correctionLevel }
     }
   };
-}
-
-async function VOICE_AGENT_V2_TEXT_TO_SPEECH(input: { text: string; settings: VoiceAgentV2Settings; promptConfig: VoiceAgentPromptConfig }) {
-  const response = await fetch("/api/speak", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      provider: input.settings.provider,
-      text: input.text,
-      voice: input.settings.voice,
-      languageName: input.settings.languageName,
-      systemPrompt: "Speak exactly the provided text. Do not add words.",
-      additionalInstructions: input.promptConfig.howToRespond
-    })
-  });
-  if (!response.ok) throw new Error(await response.text().catch(() => `speech failed with ${response.status}`));
-  const blob = await response.blob();
-  return { blob, url: URL.createObjectURL(blob) };
 }
 
 function legacySettings(settings: VoiceAgentV2Settings, prompts: VoiceAgentPromptConfig): VoiceAgentSettings {
@@ -256,8 +198,20 @@ function legacySettings(settings: VoiceAgentV2Settings, prompts: VoiceAgentPromp
   };
 }
 
-function readAnalyserJson(response: unknown): AudioAnalyserOutput["json"] | null {
-  if (response && typeof response === "object" && "json" in response) return (response as { json: AudioAnalyserOutput["json"] }).json;
+type VoiceAgentV2ResponseJson = {
+  flags: {
+    has_corrections: boolean;
+    correction_type: string;
+  };
+  correction?: unknown;
+  correction_level?: unknown;
+  chat_text_to_user?: string;
+  text_corrected?: string;
+  hint?: string;
+};
+
+function readAnalyserJson(response: unknown): VoiceAgentV2ResponseJson | null {
+  if (response && typeof response === "object" && "json" in response) return (response as { json: VoiceAgentV2ResponseJson }).json;
   return null;
 }
 

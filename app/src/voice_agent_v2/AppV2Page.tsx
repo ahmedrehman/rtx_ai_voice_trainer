@@ -1,20 +1,25 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Send } from "lucide-react";
 import {
-  VOICE_AGENT_V2_ANALYSE_AUDIO,
-  VOICE_AGENT_V2_CAPTURE_VOICE_SEGMENT,
   VOICE_AGENT_V2_CREATE_PROMPTS,
   VOICE_AGENT_V2_CREATE_SETTINGS,
   VOICE_AGENT_V2_DEFAULT_SETTINGS,
-  VOICE_AGENT_V2_OPEN_MICROPHONE,
   VOICE_AGENT_V2_SEND_TEXT,
   VOICE_AGENT_V2_TOPIC_PRESETS,
   VOICE_AGENT_V2_VISIBLE_HISTORY,
   type VoiceAgentV2Settings,
   type VoiceAgentV2Signal,
-  type VoiceAgentV2TurnResult,
-  type VoiceAgentV2VoiceSegment
+  type VoiceAgentV2TurnResult
 } from ".";
+import {
+  VOICE_AGENT_V2_REALTIME_CONNECT,
+  VOICE_AGENT_V2_REALTIME_CREATE_CLIENT_SECRET,
+  VOICE_AGENT_V2_REALTIME_EVENT_RESULT,
+  VOICE_AGENT_V2_REALTIME_MONITOR_MIC,
+  VOICE_AGENT_V2_REALTIME_OPEN_MICROPHONE,
+  type VoiceAgentV2RealtimeConnection,
+  type VoiceAgentV2RealtimeState
+} from "./realtime";
 import type { VoiceAgentChatMessage, VoiceAgentPromptConfig, VoiceAgentTopicId } from "../voice_agent";
 
 export function VoiceAgentV2AppPage({
@@ -35,13 +40,19 @@ export function VoiceAgentV2AppPage({
   const [speakOn, setSpeakOn] = useState(false);
   const [running, setRunning] = useState(false);
   const [signal, setSignal] = useState<VoiceAgentV2Signal>("green");
-  const [technical, setTechnical] = useState<VoiceAgentV2TurnResult | VoiceAgentV2VoiceSegment | { status: unknown } | null>(null);
-  const [latestSegment, setLatestSegment] = useState<VoiceAgentV2VoiceSegment | null>(null);
+  const [technical, setTechnical] = useState<VoiceAgentV2TurnResult | { status?: unknown; realtime?: unknown; event?: unknown } | null>(null);
+  const [realtimeState, setRealtimeState] = useState<VoiceAgentV2RealtimeState>({ peerState: "none", dataChannelState: "none", outgoingMicEnabled: false, outgoingMicReason: "listen_off" });
+  const [micLevel, setMicLevel] = useState(0);
+  const [micVoiceDetected, setMicVoiceDetected] = useState(false);
+  const [realtimeTextDraft, setRealtimeTextDraft] = useState("");
   const messagesRef = useRef(messages);
   const settingsRef = useRef(settings);
   const speakOnRef = useRef(speakOn);
-  const stopListenRef = useRef(false);
-  const listenLoopRef = useRef(false);
+  const realtimeConnectionRef = useRef<VoiceAgentV2RealtimeConnection | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
+  const micMonitorRef = useRef<{ stop: () => void } | null>(null);
+  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
+  const responseTextRef = useRef("");
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -57,12 +68,16 @@ export function VoiceAgentV2AppPage({
 
   useEffect(() => {
     return () => {
-      stopListenRef.current = true;
+      stopRealtime();
       messages.forEach((message) => {
         if (message.audioUrl) URL.revokeObjectURL(message.audioUrl);
       });
     };
   }, []);
+
+  useEffect(() => {
+    if (remoteAudioRef.current) remoteAudioRef.current.muted = !speakOn;
+  }, [speakOn]);
 
   async function sendText() {
     const value = text.trim();
@@ -86,59 +101,96 @@ export function VoiceAgentV2AppPage({
   }
 
   async function startListen() {
-    if (listenLoopRef.current) return;
-    stopListenRef.current = false;
-    listenLoopRef.current = true;
+    if (realtimeConnectionRef.current) return;
+    setRunning(true);
     setListenOn(true);
-    const mic = await VOICE_AGENT_V2_OPEN_MICROPHONE();
-    if (!mic.status.ok || !mic.stream) {
-      setTechnical({ status: mic.status });
-      listenLoopRef.current = false;
-      setListenOn(false);
-      return;
-    }
     try {
-      while (!stopListenRef.current) {
-        setRunning(true);
-        try {
-          const segment = await VOICE_AGENT_V2_CAPTURE_VOICE_SEGMENT({
-            stream: mic.stream,
-            threshold: 0.025,
-            silenceMs: 650,
-            preBufferMs: 1000,
-            recorderWhileListening: true,
-            maxWaitMs: 8000,
-            maxRecordMs: 6000,
-            minVoiceMs: 180,
-            shouldStop: () => stopListenRef.current
-          });
-          setTechnical(segment);
-          setLatestSegment(segment);
-          if (segment.decision === "send_voice_segment" && segment.audio) {
-            const result = await VOICE_AGENT_V2_ANALYSE_AUDIO({
-              settings: settingsRef.current,
-              audio: segment.audio,
-              visibleHistory: VOICE_AGENT_V2_VISIBLE_HISTORY(messagesRef.current),
-              speakEnabled: speakOnRef.current
-            });
-            applyTurn(result);
-          }
-        } finally {
-          setRunning(false);
+      const mic = await VOICE_AGENT_V2_REALTIME_OPEN_MICROPHONE();
+      if (!mic.status.ok || !mic.stream) throw new Error(mic.status.error || "Microphone did not open.");
+      localStreamRef.current = mic.stream;
+      micMonitorRef.current = VOICE_AGENT_V2_REALTIME_MONITOR_MIC({
+        stream: mic.stream,
+        threshold: 0.025,
+        onSample: (sample) => {
+          setMicLevel(sample.rms);
+          setMicVoiceDetected(sample.voiceDetected);
         }
-        await wait(150);
-      }
+      });
+      const secret = await VOICE_AGENT_V2_REALTIME_CREATE_CLIENT_SECRET({
+        settings: settingsRef.current,
+        visibleHistory: VOICE_AGENT_V2_VISIBLE_HISTORY(messagesRef.current)
+      });
+      setTechnical({ status: "client_secret_created", realtime: redactRealtimeSecret(secret.data) });
+      const connection = await VOICE_AGENT_V2_REALTIME_CONNECT({
+        stream: mic.stream,
+        clientSecret: secret.clientSecret,
+        listenEnabled: true,
+        suppressSpeakerFeedback: true,
+        onRemoteStream: (stream) => {
+          if (!remoteAudioRef.current) return;
+          remoteAudioRef.current.srcObject = stream;
+          remoteAudioRef.current.muted = !speakOnRef.current;
+          void remoteAudioRef.current.play().catch((error) => setTechnical({ status: "remote_audio_play_error", realtime: error instanceof Error ? error.message : String(error) }));
+        },
+        onEvent: handleRealtimeEvent,
+        onState: setRealtimeState
+      });
+      if (!connection.status.ok) throw new Error(connection.status.error || "Realtime connection failed.");
+      realtimeConnectionRef.current = connection;
+      setTechnical({ status: connection.status, realtime: "streaming_webrtc_connected" });
+    } catch (error) {
+      setTechnical({ status: "realtime_error", realtime: error instanceof Error ? error.message : String(error) });
+      stopRealtime();
     } finally {
-      mic.stream.getTracks().forEach((track) => track.stop());
-      listenLoopRef.current = false;
-      setListenOn(false);
+      setRunning(false);
+    }
+  }
+
+  function stopRealtime() {
+    micMonitorRef.current?.stop();
+    micMonitorRef.current = null;
+    realtimeConnectionRef.current?.stop();
+    realtimeConnectionRef.current = null;
+    localStreamRef.current?.getTracks().forEach((track) => track.stop());
+    localStreamRef.current = null;
+    if (remoteAudioRef.current) {
+      remoteAudioRef.current.pause();
+      remoteAudioRef.current.srcObject = null;
+    }
+    setRealtimeState({ peerState: "none", dataChannelState: "none", outgoingMicEnabled: false, outgoingMicReason: "listen_off" });
+    setMicVoiceDetected(false);
+    setListenOn(false);
+  }
+
+  function handleRealtimeEvent(event: unknown) {
+    const result = VOICE_AGENT_V2_REALTIME_EVENT_RESULT(event);
+    setTechnical({ status: "realtime_event", event });
+    if (result.aiSpeaking !== undefined) realtimeConnectionRef.current?.setAiSpeaking(result.aiSpeaking);
+    if (result.error) setTechnical({ status: "realtime_error", realtime: result.error, event });
+    if (result.textDelta) {
+      responseTextRef.current = `${responseTextRef.current}${result.textDelta}`;
+      setRealtimeTextDraft(responseTextRef.current);
+    }
+    if (result.textDone) {
+      responseTextRef.current = result.textDone || responseTextRef.current;
+      const text = responseTextRef.current.trim();
+      if (text) {
+        const assistantMessage: VoiceAgentChatMessage = {
+          id: createId(),
+          role: "assistant",
+          text,
+          createdAt: new Date().toISOString()
+        };
+        setMessages((current) => [...current, assistantMessage].slice(-40));
+      }
+      responseTextRef.current = "";
+      setRealtimeTextDraft("");
     }
   }
 
   function toggleListen() {
     if (listenOn) {
-      stopListenRef.current = true;
-      setListenOn(false);
+      stopRealtime();
       return;
     }
     void startListen();
@@ -199,7 +251,15 @@ export function VoiceAgentV2AppPage({
               {message.audioUrl && <button className="secondary-button" type="button" onClick={() => void new Audio(message.audioUrl).play()}>Play</button>}
             </article>
           ))}
+          {realtimeTextDraft && (
+            <article className="chat-message assistant">
+              <span>assistant</span>
+              <p>{realtimeTextDraft}</p>
+            </article>
+          )}
         </section>
+
+        <audio ref={remoteAudioRef} autoPlay playsInline />
 
         <div className="chat-composer">
           <textarea
@@ -229,8 +289,14 @@ export function VoiceAgentV2AppPage({
               <pre>{JSON.stringify(VOICE_AGENT_V2_CREATE_PROMPTS(settings), null, 2)}</pre>
             </section>
             <section className="method-panel">
-              <h2>Latest Capture</h2>
-              <pre>{JSON.stringify(latestSegment || { status: "not run" }, null, 2)}</pre>
+              <h2>Realtime Stream</h2>
+              <pre>{JSON.stringify({
+                mode: "browser microphone -> WebRTC realtime AI -> remote audio stream",
+                mic: { rms: micLevel, voiceDetected: micVoiceDetected },
+                state: realtimeState,
+                speakOn,
+                textDraft: realtimeTextDraft
+              }, null, 2)}</pre>
             </section>
             <section className="method-panel">
               <h2>Latest V2 Result</h2>
@@ -293,11 +359,14 @@ function signalClass(signal: VoiceAgentV2Signal) {
   return "idle";
 }
 
-function wait(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 function createId() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function redactRealtimeSecret(value: unknown) {
+  return JSON.parse(JSON.stringify(value, (key, item) => {
+    if ((key === "value" || key === "secret") && typeof item === "string") return `[secret length=${item.length}]`;
+    return item;
+  }));
 }
