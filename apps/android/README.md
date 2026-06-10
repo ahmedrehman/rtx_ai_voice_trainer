@@ -22,4 +22,13 @@ POST /api/androidservice/realtime-client-secret
 POST /api/androidservice/audio-roundtrip
 ```
 
-For local phone testing, set `backendBaseUrl` in `AppConfig.kt` to the LAN URL printed by the local server.
+Build variants choose the backend URL:
+
+- `localDebug` uses `http://10.0.2.2:5173` for Android emulator testing.
+- `prodDebug` and `prodRelease` use `https://aitutor.lernspass.net`.
+
+For testing on a physical phone against a local server, change the `local` flavor `BACKEND_BASE_URL` in `app/build.gradle.kts` to the LAN URL printed by the local server.
+
+## Store
+
+See `STORE_READINESS.md` for release signing, Play artifact, metadata, and privacy notes.

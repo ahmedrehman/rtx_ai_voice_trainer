@@ -15,8 +15,58 @@ android {
         versionName = "0.1.0"
     }
 
+    signingConfigs {
+        create("release") {
+            val storeFilePath = providers.environmentVariable("AI_VOICE_TRAINER_UPLOAD_STORE_FILE").orNull
+            if (!storeFilePath.isNullOrBlank()) {
+                storeFile = file(storeFilePath)
+            }
+            storePassword = providers.environmentVariable("AI_VOICE_TRAINER_UPLOAD_STORE_PASSWORD").orNull
+            keyAlias = providers.environmentVariable("AI_VOICE_TRAINER_UPLOAD_KEY_ALIAS").orNull
+            keyPassword = providers.environmentVariable("AI_VOICE_TRAINER_UPLOAD_KEY_PASSWORD").orNull
+        }
+    }
+
+    flavorDimensions += "environment"
+    productFlavors {
+        create("local") {
+            dimension = "environment"
+            applicationIdSuffix = ".local"
+            versionNameSuffix = "-local"
+            buildConfigField("String", "BACKEND_BASE_URL", "\"http://10.0.2.2:5173\"")
+            resValue("string", "app_name", "AI Voice Trainer Local")
+        }
+
+        create("prod") {
+            dimension = "environment"
+            buildConfigField("String", "BACKEND_BASE_URL", "\"https://aitutor.lernspass.net\"")
+            resValue("string", "app_name", "AI Voice Trainer")
+        }
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
+
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            val releaseStoreFile = providers.environmentVariable("AI_VOICE_TRAINER_UPLOAD_STORE_FILE").orNull
+            if (!releaseStoreFile.isNullOrBlank()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
+
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     composeOptions {
@@ -34,6 +84,7 @@ dependencies {
     androidTestImplementation(composeBom)
 
     implementation("androidx.activity:activity-compose:1.9.3")
+    implementation("androidx.core:core-splashscreen:1.0.1")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.ui:ui")

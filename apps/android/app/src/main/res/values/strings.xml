@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="microphone_permission_reason">AI Voice Trainer needs microphone access for speech practice.</string>
+</resources>

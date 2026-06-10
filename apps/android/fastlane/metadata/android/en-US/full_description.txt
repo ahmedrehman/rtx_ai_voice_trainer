@@ -1,0 +1,13 @@
+AI Voice Trainer helps language learners practice short spoken and typed turns with concise correction-focused feedback.
+
+The Android app uses native Android controls, keeps the OpenAI API key on the server, and connects only to the shared AI Voice Trainer backend.
+
+Features:
+- Practice short speaking turns.
+- Read concise correction feedback.
+- Use free chat for normal questions.
+- Choose when the app is allowed to speak.
+- Keep green correction results quiet.
+- Test microphone, speaker, backend, and realtime connection behavior from a native debug surface.
+
+AI Voice Trainer is designed for practice feedback, not official language assessment.

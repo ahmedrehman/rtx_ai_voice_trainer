@@ -174,7 +174,7 @@ fun AiVoiceTrainerApp() {
                             input = ""
                             scope.launch {
                                 runCatching { client.textChat(text, topic, freeChatOn) }
-                                    .onSuccess { messages.add(ChatMessage(System.nanoTime(), false, "Received.", SignalLevel.Green)) }
+                                    .onSuccess { messages.add(ChatMessage(System.nanoTime(), false, it, SignalLevel.Green)) }
                                     .onFailure { messages.add(ChatMessage(System.nanoTime(), false, it.message ?: "Request failed.", SignalLevel.Red)) }
                             }
                         }
