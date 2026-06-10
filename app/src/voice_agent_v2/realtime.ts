@@ -475,10 +475,12 @@ export async function VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK(input: {
             "This is one user audio pack. Answer only this pack.",
             "If you mark the level, use exactly one app signal word at the start: SignalVert, SignalJaune, SignalOrange, or SignalRouge.",
             "A foreign accent is OK when the words are understandable: use SignalVert and do not correct it.",
-            "Use SignalJaune only for a concrete pronunciation/accent improvement that improves clarity.",
+            "If grammar, vocabulary, and meaning are correct, use SignalVert even when pronunciation is imperfect but understandable.",
+            "Use SignalJaune only for a concrete pronunciation/accent issue that makes a word unclear.",
             "Use SignalOrange for vocabulary or meaning problems.",
             "Use SignalRouge only for a real grammar mistake or severe meaning mistake.",
-            "Pronunciation or accent must never be SignalOrange or SignalRouge.",
+            "Pronunciation or accent must never be SignalOrange or SignalRouge. Never treat a slight pronunciation improvement as serious.",
+            "Before using SignalRouge, verify there is an actual grammar error or severe meaning error in the words, not just pronunciation.",
             "Keep spoken correction text as short as possible after the signal word.",
             "Prefer 2 to 8 words. Never add filler or encouragement.",
             "Never react to your own previous audio if it appears in the microphone input."
@@ -721,8 +723,12 @@ export function VOICE_AGENT_V2_REALTIME_CREATE_INSTRUCTIONS(settings: VoiceAgent
     "Use one short sentence only. For simple questions, answer with only the result.",
     "Also emit the same short answer as response transcript/text events when available.",
     "Speak in the target language. If you mark the level, use exactly one app signal word at the start: SignalVert, SignalJaune, SignalOrange, or SignalRouge. Never say the English word Hint.",
-    "A foreign accent is OK when the words are understandable: use SignalVert and do not correct it. Use SignalJaune only for a concrete pronunciation/accent improvement that improves clarity. Pronunciation or accent must never be SignalOrange or SignalRouge.",
+    "A foreign accent is OK when the words are understandable: use SignalVert and do not correct it.",
+    "If grammar, vocabulary, and meaning are correct, use SignalVert even when pronunciation is imperfect but understandable.",
+    "Use SignalJaune only for a concrete pronunciation/accent issue that makes a word unclear.",
+    "Pronunciation or accent must never be SignalOrange or SignalRouge. Never treat a slight pronunciation improvement as serious.",
     "Use SignalOrange for vocabulary or meaning problems, and SignalRouge only for a real grammar mistake or severe meaning mistake. Keep spoken correction text short and natural.",
+    "Before using SignalRouge, verify there is an actual grammar error or severe meaning error in the words, not just pronunciation.",
     settings.allowFreeChat
       ? "Answer the user's question naturally. Correct only when the user asks for correction or clearly practices the language."
       : "For practice speech, say only one corrected phrase and one tiny tip only if truly necessary. If there is no useful correction, stay silent or give a very short confirmation.",
