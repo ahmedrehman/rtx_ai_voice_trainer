@@ -48,7 +48,7 @@ export function VoiceAgentV2AppPage({
   const [packConnectionState, setPackConnectionState] = useState<"idle" | "starting" | "listening" | "sending" | "playing" | "error">("idle");
   const [sendActive, setSendActive] = useState(false);
   const [sendStatusText, setSendStatusText] = useState("NOT SEND - listen off");
-  const [debugVoiceDestination, setDebugVoiceDestination] = useState<VoiceAgentV2VoiceDestination>("ai");
+  const [activeVoiceDestination, setActiveVoiceDestination] = useState<VoiceAgentV2VoiceDestination>("ai");
   const [roundtripEndpoint, setRoundtripEndpoint] = useState("/api/voice-agent/audio-roundtrip");
   const [voiceThreshold, setVoiceThreshold] = useState(0.025);
   const [silenceMs, setSilenceMs] = useState(650);
@@ -114,15 +114,16 @@ export function VoiceAgentV2AppPage({
     }
   }
 
-  async function startListen() {
+  async function startListen(voiceDestination: VoiceAgentV2VoiceDestination = "ai") {
     if (listenLoopRef.current) return;
-    const voiceDestination: VoiceAgentV2VoiceDestination = debug ? debugVoiceDestination : "ai";
-    const captureThreshold = debug ? voiceThreshold : 0.025;
-    const captureSilenceMs = debug ? silenceMs : 650;
-    const captureMaxSegmentMs = debug ? maxSegmentMs : 6000;
-    const captureRecorderWhileListening = debug ? recorderWhileListening : true;
+    const useDiagnosticCaptureSettings = debug && voiceDestination === "server_roundtrip";
+    const captureThreshold = useDiagnosticCaptureSettings ? voiceThreshold : 0.025;
+    const captureSilenceMs = useDiagnosticCaptureSettings ? silenceMs : 650;
+    const captureMaxSegmentMs = useDiagnosticCaptureSettings ? maxSegmentMs : 6000;
+    const captureRecorderWhileListening = useDiagnosticCaptureSettings ? recorderWhileListening : true;
     stopListenRef.current = false;
     listenLoopRef.current = true;
+    setActiveVoiceDestination(voiceDestination);
     setListenOn(true);
     setPackConnectionState("starting");
     setSendStatusText("NOT SEND - opening microphone");
@@ -513,7 +514,7 @@ export function VoiceAgentV2AppPage({
       stopRealtime();
       return;
     }
-    void startListen();
+    void startListen("ai");
   }
 
   function applyTurn(result: VoiceAgentV2TurnResult) {
@@ -610,16 +611,31 @@ export function VoiceAgentV2AppPage({
             </section>
             <section className="method-panel">
               <h2>Voice Pack Loop</h2>
-              <label className="field">
-                <span>voice destination</span>
-                <select value={debugVoiceDestination} onChange={(event) => setDebugVoiceDestination(event.target.value as VoiceAgentV2VoiceDestination)} disabled={listenOn}>
-                  <option value="ai">AI voice response</option>
-                  <option value="server_roundtrip">Server audio roundtrip</option>
-                </select>
-              </label>
+              <SignalLine label="connection" active={packConnectionState === "listening" || packConnectionState === "sending" || packConnectionState === "playing"} value={packConnectionState} />
+              <SignalLine label="local mic voice" active={micVoiceDetected} value={`${micVoiceDetected ? "voice/sound" : "no voice"} rms=${micLevel}`} />
+              <ServerSendLamp active={sendActive} value={sendStatusText} />
+              <SignalLine label="playback block" active={packConnectionState === "playing"} value={packConnectionState === "playing" ? "YES - pack capture blocked" : "NO"} />
+              <pre>{JSON.stringify({
+                mode: activeVoiceDestination === "server_roundtrip"
+                  ? "browser microphone -> local VAD/prebuffer -> SEND only voice pack -> server audio roundtrip -> autoplay returned audio"
+                  : "browser microphone -> local VAD/prebuffer -> SEND only voice pack -> AI voice turn stream",
+                destination: activeVoiceDestination,
+                roundtripEndpoint,
+                connection: packConnectionState,
+                mic: { rms: micLevel, voiceDetected: micVoiceDetected },
+                send: { active: sendActive, text: sendStatusText },
+                speakOn,
+                textDraft: realtimeTextDraft,
+                latestPack: latestPack ? { decision: latestPack.decision, debug: latestPack.debug } : null,
+                latestTurn: latestTurn ? { status: latestTurn.status, text: latestTurn.text, correctionEvent: latestTurn.correctionEvent } : null,
+                latestRoundtrip: latestRoundtrip ? { status: latestRoundtrip.status, debug: latestRoundtrip.debug } : null
+              }, null, 2)}</pre>
+            </section>
+            <section className="method-panel">
+              <h2>Audio Roundtrip Diagnostic</h2>
               <label className="field">
                 <span>server roundtrip endpoint</span>
-                <input value={roundtripEndpoint} onChange={(event) => setRoundtripEndpoint(event.target.value)} disabled={listenOn || debugVoiceDestination !== "server_roundtrip"} />
+                <input value={roundtripEndpoint} onChange={(event) => setRoundtripEndpoint(event.target.value)} disabled={listenOn} />
               </label>
               <label className="field">
                 <span>voice threshold</span>
@@ -637,25 +653,7 @@ export function VoiceAgentV2AppPage({
                 <input type="checkbox" checked={recorderWhileListening} onChange={(event) => setRecorderWhileListening(event.target.checked)} disabled={listenOn} />
                 <span>record while listening</span>
               </label>
-              <SignalLine label="connection" active={packConnectionState === "listening" || packConnectionState === "sending" || packConnectionState === "playing"} value={packConnectionState} />
-              <SignalLine label="local mic voice" active={micVoiceDetected} value={`${micVoiceDetected ? "voice/sound" : "no voice"} rms=${micLevel}`} />
-              <ServerSendLamp active={sendActive} value={sendStatusText} />
-              <SignalLine label="playback block" active={packConnectionState === "playing"} value={packConnectionState === "playing" ? "YES - pack capture blocked" : "NO"} />
-              <pre>{JSON.stringify({
-                mode: debugVoiceDestination === "server_roundtrip"
-                  ? "browser microphone -> local VAD/prebuffer -> SEND only voice pack -> server audio roundtrip -> autoplay returned audio"
-                  : "browser microphone -> local VAD/prebuffer -> SEND only voice pack -> AI voice turn stream",
-                destination: debugVoiceDestination,
-                roundtripEndpoint,
-                connection: packConnectionState,
-                mic: { rms: micLevel, voiceDetected: micVoiceDetected },
-                send: { active: sendActive, text: sendStatusText },
-                speakOn,
-                textDraft: realtimeTextDraft,
-                latestPack: latestPack ? { decision: latestPack.decision, debug: latestPack.debug } : null,
-                latestTurn: latestTurn ? { status: latestTurn.status, text: latestTurn.text, correctionEvent: latestTurn.correctionEvent } : null,
-                latestRoundtrip: latestRoundtrip ? { status: latestRoundtrip.status, debug: latestRoundtrip.debug } : null
-              }, null, 2)}</pre>
+              <button className="secondary-button" type="button" onClick={() => void startListen("server_roundtrip")} disabled={listenOn}>Start roundtrip</button>
             </section>
             <section className="method-panel">
               <h2>Latest V2 Result</h2>

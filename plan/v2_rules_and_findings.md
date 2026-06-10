@@ -99,6 +99,14 @@ The key is read server-side from `env.OPENAI_API_KEY` and sent to OpenAI as an A
 
 The app sends audio packs to the server. The debug page has a server audio roundtrip mode to verify that captured audio is not broken.
 
+The main debug listen path must test the app behavior exactly:
+
+```text
+debug Listen button -> same AI path as normal app
+```
+
+Debug controls must not silently change the functional app test path. Any audio roundtrip behavior must stay a separate diagnostic action.
+
 Roundtrip expected behavior:
 
 ```text
