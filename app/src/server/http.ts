@@ -4,6 +4,7 @@ import { createAudioTurnDefaultPrompts } from "../lib_server_ai_voice";
 import { VOICE_AGENT_BACKEND, type VoiceAgentServerAnalyseRequest, type VoiceAgentTextChatRequest } from "../voice_agent";
 import { VOICE_AGENT_REALTIME_CREATE_CLIENT_SECRET, type RealtimeClientSecretInput } from "../voice_agent_realtime_webrtc_test/server";
 import { clearCostLedger, getCostLedger, listProviders, runCorrection } from "./app";
+import { handleAndroidServiceRequest } from "./androidservice";
 import { json, methodNotAllowed, notFound } from "./responses";
 import { transcribeOpenAiFormData } from "./transcriptionEndpoint";
 
@@ -13,6 +14,9 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
   const pathname = stripBasePath(url.pathname, basePath);
 
   try {
+    const androidServiceResponse = await handleAndroidServiceRequest(request, env, pathname);
+    if (androidServiceResponse) return androidServiceResponse;
+
     if (pathname === "/api/providers") {
       if (request.method !== "GET") return methodNotAllowed();
       return json(await listProviders());
