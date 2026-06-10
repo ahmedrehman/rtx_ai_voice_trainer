@@ -59,16 +59,6 @@ struct TrainerView: View {
                 )
             }
             .navigationTitle("AI Voice Trainer")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        Task { await viewModel.requestRealtimeSecret() }
-                    } label: {
-                        Image(systemName: "antenna.radiowaves.left.and.right")
-                    }
-                    .accessibilityLabel("Start realtime")
-                }
-            }
             .alert("Error", isPresented: Binding(
                 get: { viewModel.lastError != nil },
                 set: { if !$0 { viewModel.lastError = nil } }
@@ -145,4 +135,3 @@ private struct ComposerBar: View {
         .background(.bar)
     }
 }
-

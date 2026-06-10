@@ -174,6 +174,14 @@ struct VoiceAgentTextChatResponse: Decodable {
     let audio: Audio?
 }
 
+struct VoiceTurnStreamResult {
+    var text: String
+    var audioData: Data?
+    var audioFormat: String?
+    var correctionLevel: Int
+    var events: [String]
+}
+
 extension VoiceAgentTextChatResponse.Payload {
     var visibleText: String {
         let candidates = [chatTextToUser, textCorrected, hint].map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -195,3 +203,11 @@ extension VoiceAgentTextChatResponse.Payload {
     }
 }
 
+extension Signal {
+    static func fromCorrectionLevel(_ level: Int) -> Signal {
+        if level == 1 { return .yellow }
+        if level == 2 { return .orange }
+        if level >= 3 { return .red }
+        return .green
+    }
+}

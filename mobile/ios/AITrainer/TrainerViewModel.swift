@@ -5,7 +5,7 @@ final class TrainerViewModel: ObservableObject {
     @Published var config = AppConfig.live
     @Published var selectedTopic = TopicPreset.presets[0]
     @Published var listenOn = false {
-        didSet { realtime.setListenOn(listenOn, aiSpeaking: aiSpeaking) }
+        didSet { handleListenToggle() }
     }
     @Published var speakOn = false {
         didSet { applyRemoteAudioGate(reason: "speak changed") }
@@ -28,6 +28,7 @@ final class TrainerViewModel: ObservableObject {
     let micMonitor = MicrophoneLevelMonitor()
     let speaker = SpeakerTonePlayer()
     let roundtrip = AudioRoundtripRecorder()
+    let voiceRecorder = VoiceTurnRecorder()
     lazy var realtime = RealtimeSession { [weak self] in
         APIClient(config: self?.config ?? .live)
     }
@@ -106,6 +107,52 @@ final class TrainerViewModel: ObservableObject {
         isSending = false
     }
 
+    func startVoiceTurn() {
+        lastError = nil
+        Task {
+            await prepareAudioSession()
+            do {
+                try voiceRecorder.start()
+                realtime.sessionState = .listening
+                realtime.eventLog.append("voice pack recording started")
+            } catch {
+                listenOn = false
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    func finishVoiceTurn() {
+        guard voiceRecorder.isRecording else { return }
+        Task {
+            isSending = true
+            realtime.sessionState = .starting
+            lastError = nil
+            do {
+                let audioData = try voiceRecorder.stop()
+                guard !audioData.isEmpty else {
+                    throw APIClientError.server("Voice recording was empty.")
+                }
+                realtime.eventLog.append("send voice pack \(audioData.count) bytes")
+                let result = try await apiClient.voiceTurnStream(
+                    audioData: audioData,
+                    audioFormat: "wav",
+                    history: recentHistory(),
+                    topic: selectedTopic,
+                    freeChatOn: freeChatOn
+                )
+                applyVoiceTurn(result)
+                realtime.eventLog.append("voice stream events: \(result.events.joined(separator: ", "))")
+                realtime.sessionState = .connected
+            } catch {
+                lastError = error.localizedDescription
+                messages.append(ChatMessage(role: .assistant, text: error.localizedDescription, signal: .red))
+                realtime.sessionState = .error
+            }
+            isSending = false
+        }
+    }
+
     func playMessageAudio(_ message: ChatMessage) {
         guard let audioData = message.audioData else { return }
         do {
@@ -154,6 +201,37 @@ final class TrainerViewModel: ObservableObject {
         return signal.level >= speakLevel.rawValue
     }
 
+    private func applyVoiceTurn(_ result: VoiceTurnStreamResult) {
+        let turnSignal = freeChatOn ? Signal.green : Signal.fromCorrectionLevel(result.correctionLevel)
+        signal = turnSignal
+        messages.append(ChatMessage(
+            role: .assistant,
+            text: result.text,
+            signal: freeChatOn ? nil : turnSignal,
+            audioData: result.audioData,
+            audioFormat: result.audioFormat
+        ))
+        if shouldAutoPlayAudio(signal: turnSignal, audioAvailable: result.audioData != nil), let audioData = result.audioData {
+            do {
+                aiSpeaking = true
+                try speaker.play(data: audioData)
+                aiSpeaking = false
+            } catch {
+                lastError = error.localizedDescription
+                aiSpeaking = false
+            }
+        }
+    }
+
+    private func handleListenToggle() {
+        realtime.setListenOn(listenOn, aiSpeaking: aiSpeaking)
+        if listenOn {
+            startVoiceTurn()
+        } else {
+            finishVoiceTurn()
+        }
+    }
+
     private func applyRemoteAudioGate(reason: String) {
         if freeChatOn {
             realtime.setRemoteAudioMuted(!speakOn)
@@ -164,4 +242,3 @@ final class TrainerViewModel: ObservableObject {
         realtime.eventLog.append("audio gate: \(reason)")
     }
 }
-

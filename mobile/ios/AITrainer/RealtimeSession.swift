@@ -22,7 +22,7 @@ final class RealtimeSession: ObservableObject {
         sessionState = .starting
         peerState = .connecting
         dataChannelState = .connecting
-        eventLog.append("request realtime client secret")
+        eventLog.append("voice-pack mode does not use WebRTC")
 
         do {
             let json = try await apiClient().realtimeClientSecret(topic: topic)
@@ -32,7 +32,7 @@ final class RealtimeSession: ObservableObject {
             sessionState = .error
             peerState = .failed
             dataChannelState = .closed
-            eventLog.append("WebRTC iOS framework not linked yet")
+            eventLog.append("client secret debug only; live app uses V2 voice packs")
         } catch {
             sessionState = .error
             peerState = .failed
@@ -78,4 +78,3 @@ final class RealtimeSession: ObservableObject {
         )
     }
 }
-

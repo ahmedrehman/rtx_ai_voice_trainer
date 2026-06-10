@@ -24,7 +24,7 @@ The app never stores an OpenAI API key. It only calls:
 
 ```text
 POST /api/voice-agent/text-chat
-POST /api/voice-agent/realtime-client-secret
+POST /api/voice-agent/voice-turn-stream
 POST /api/voice-agent/audio-roundtrip
 GET  /api/providers
 ```
@@ -34,8 +34,7 @@ GET  /api/providers
 - SwiftUI UI, no `WKWebView`.
 - iPhone and iPad support through `TARGETED_DEVICE_FAMILY = 1,2`.
 - Microphone permission and audio session are native.
-- Listen toggles only gate outgoing audio state in the app model.
+- Listen records one native voice pack; turning Listen off sends it to the V2 voice stream endpoint.
 - Speak toggles only gate playback.
 - Green correction-mode responses are written to chat but are not auto-spoken.
-- The WebRTC boundary is isolated in `RealtimeSession.swift`; add the chosen WebRTC iOS framework there to complete live peer audio.
-
+- The app follows the web V2 path: native audio pack -> `/api/voice-agent/voice-turn-stream` -> native playback gate.

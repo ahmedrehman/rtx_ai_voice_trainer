@@ -67,22 +67,11 @@ struct DebugView: View {
                     Text("Output: \(viewModel.audioSession.outputRoute)")
                 }
 
-                Section("WebRTC AI") {
-                    Button("Connect realtime") {
-                        Task { await viewModel.requestRealtimeSecret() }
-                    }
-                    Button("Disconnect", role: .destructive) {
-                        viewModel.disconnectRealtime()
-                    }
-                    Toggle("Outgoing mic track enabled", isOn: Binding(
-                        get: { viewModel.outgoingMicEnabled },
-                        set: { viewModel.realtime.setListenOn($0, aiSpeaking: viewModel.aiSpeaking) }
-                    ))
+                Section("Voice Pack AI") {
+                    Toggle("Listen records voice pack", isOn: $viewModel.listenOn)
                     LabeledContent("Session", value: viewModel.sessionState.rawValue)
-                    LabeledContent("Peer", value: viewModel.peerState.rawValue)
-                    LabeledContent("Data channel", value: viewModel.dataChannelState.rawValue)
-                    LabeledContent("Remote audio", value: viewModel.remoteAudioMuted ? "Muted" : "Active")
-                    LabeledContent("Mic reason", value: viewModel.outgoingMicReason.rawValue)
+                    LabeledContent("Recorder", value: viewModel.voiceRecorder.status)
+                    LabeledContent("Last pack", value: "\(viewModel.voiceRecorder.lastByteCount) bytes")
 
                     ForEach(viewModel.realtime.eventLog.indices, id: \.self) { index in
                         Text(viewModel.realtime.eventLog[index])
@@ -131,4 +120,3 @@ struct DebugView: View {
         }
     }
 }
-
