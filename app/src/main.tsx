@@ -23,6 +23,7 @@ import { APP_V2_DEBUG_PAGE } from "./voice_agent_v2/debug";
 import { VOICE_AGENT_V2_DEFAULT_SETTINGS, type VoiceAgentV2Settings } from "./voice_agent_v2";
 import { AUDIO_ANALYSER_DEFAULT_PROMPTS, createAudioAnalyserDefaultPrompts } from "./lib_server_ai_voice/audioAnalyserPrompts";
 import { AUDIO_TO_AI_TEXT_AND_AUDIO_DEFAULT_PROMPTS, createAudioTurnDefaultPrompts } from "./lib_server_ai_voice/audioTurnPrompts";
+import { registerPwaServiceWorker } from "./pwa";
 import {
   VOICE_AGENT_ANALYSE_AUDIO,
   VOICE_AGENT_APPLY_KEYWORD_CONTROL_STATE,
@@ -2517,4 +2518,5 @@ function MicrophoneDocs() {
   );
 }
 
+registerPwaServiceWorker();
 createRoot(document.getElementById("root")!).render(<App />);

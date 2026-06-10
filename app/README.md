@@ -48,8 +48,8 @@ Build command: npm run build
 Deploy command: npm run deploy:cloudflare
 ```
 
-The production build defaults to `/apps/aitutor/`. Override `VITE_BASE_PATH`
-only if the deployment path changes.
+The production build defaults to `/`. Set `VITE_BASE_PATH=/apps/aitutor/`
+only when deploying the same build under that mounted path.
 
 Before the first deploy, create the D1 database in Cloudflare and replace
 `replace-with-cloudflare-d1-database-id` in `wrangler.toml`.
