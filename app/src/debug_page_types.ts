@@ -19,7 +19,14 @@ export type DebugActionDefinition = {
 export type DebugPageDefinition = {
   id: string;
   title: string;
-  module: "app_v2_test" | "lib_client_voice_system_test" | "lib_server_ai_voice_test" | "lib_data_store_test" | "voice_agent_frontend_test" | "voice_agent_realtime_webrtc_test";
+  module:
+    | "app_v2_test"
+    | "app_v3_test"
+    | "lib_client_voice_system_test"
+    | "lib_server_ai_voice_test"
+    | "lib_data_store_test"
+    | "voice_agent_frontend_test"
+    | "voice_agent_realtime_webrtc_test";
   role: string;
   ready: boolean;
   notReadyReason?: string;
