@@ -13,6 +13,7 @@ import {
 import { createLocalMemoryDataStore } from "./lib_data_store";
 import type { DataStoreRecordType } from "./lib_data_store";
 import { CLIENT_VOICE_SYSTEM_DEBUG_PAGES } from "./lib_client_voice_system_test";
+import { AudioMicroStartDebugPage } from "./lib_client_voice_system_test/audio_micro_start.debug";
 import { DATA_STORE_DEBUG_PAGES } from "./lib_data_store_test";
 import { SERVER_AI_VOICE_DEBUG_PAGES } from "./lib_server_ai_voice_test";
 import { VOICE_AGENT_FRONTEND_DEBUG_PAGES } from "./voice_agent_frontend_test";
@@ -232,6 +233,7 @@ function PageView({
       {page.module === "app_v2_test" && <VoiceAgentV2AppPage debug settings={voiceAgentV2Settings} setSettings={setVoiceAgentV2Settings} />}
       {page.module === "voice_agent_realtime_webrtc_test" && <VoiceAgentRealtimeWebrtcDebugPage settings={voiceAgentSettings} />}
       {page.id === "VOICE_AGENT_CONFIG" && <VoiceAgentV2ConfigPage settings={voiceAgentV2Settings} setSettings={setVoiceAgentV2Settings} />}
+      {page.id === "AUDIO_MICRO_START_TEST" && <AudioMicroStartDebugPage />}
       {page.id === "MICROPHONE_AUDIO_REQUIREMENTS" && <MicrophoneDocs />}
       {page.id === "SYSTEM_MEANINGFUL_AUDIO_CHUNK" && <MeaningfulAudioChunkDebug />}
       {page.id === "SYSTEM_AUDIO_ENERGY_CHECK" && <AudioEnergyCheckDebug />}
@@ -250,6 +252,7 @@ function PageView({
         "VOICE_AGENT_TEXT_CHAT_TEST",
         "VOICE_AGENT_STREAM_TEXT_CHAT_TEST",
         "VOICE_AGENT_REALTIME_WEBRTC_TEST",
+        "AUDIO_MICRO_START_TEST",
         "SYSTEM_MEANINGFUL_AUDIO_CHUNK",
         "SYSTEM_AUDIO_ENERGY_CHECK",
         "SYSTEM_MICRO_TO_AUDIO",
