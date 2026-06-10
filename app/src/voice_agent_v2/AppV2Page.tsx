@@ -755,7 +755,7 @@ function stripSignalCodeword(text: string) {
   return text.replace(/^\s*(signal\s*(?:vert|jaune|orange|rouge)|signal(?:vert|jaune|orange|rouge))\b\s*[:,-]?\s*/i, "");
 }
 
-function hasStandardLevelWord(value: unknown) {
+function hasStandardLevelWord(value: unknown): boolean {
   if (typeof value === "string") return /^\s*(signal\s*(?:vert|jaune|orange|rouge)|signal(?:vert|jaune|orange|rouge))\b/i.test(value);
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
