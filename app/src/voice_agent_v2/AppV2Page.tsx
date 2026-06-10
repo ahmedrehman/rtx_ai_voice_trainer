@@ -5,6 +5,7 @@ import {
   VOICE_AGENT_V2_CREATE_SETTINGS,
   VOICE_AGENT_V2_DEFAULT_SETTINGS,
   VOICE_AGENT_V2_SEND_TEXT,
+  VOICE_AGENT_V2_SIGNAL,
   VOICE_AGENT_V2_TOPIC_PRESETS,
   VOICE_AGENT_V2_VISIBLE_HISTORY,
   type VoiceAgentV2Settings,
@@ -12,15 +13,18 @@ import {
   type VoiceAgentV2TurnResult
 } from ".";
 import {
-  VOICE_AGENT_V2_REALTIME_CONNECT,
-  VOICE_AGENT_V2_REALTIME_CREATE_CLIENT_SECRET,
+  VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK,
   VOICE_AGENT_V2_REALTIME_EVENT_RESULT,
-  VOICE_AGENT_V2_REALTIME_MONITOR_MIC,
   VOICE_AGENT_V2_REALTIME_OPEN_MICROPHONE,
-  type VoiceAgentV2RealtimeConnection,
-  type VoiceAgentV2RealtimeState
+  VOICE_AGENT_V2_REALTIME_SERVER_AUDIO_ROUNDTRIP,
+  VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK,
+  type VoiceAgentV2RealtimeAudioRoundtrip,
+  type VoiceAgentV2RealtimeVoicePack,
+  type VoiceAgentV2RealtimeVoicePackTurn
 } from "./realtime";
 import type { VoiceAgentChatMessage, VoiceAgentPromptConfig, VoiceAgentTopicId } from "../voice_agent";
+
+type VoiceAgentV2VoiceDestination = "ai" | "server_roundtrip";
 
 export function VoiceAgentV2AppPage({
   debug = false,
@@ -40,19 +44,32 @@ export function VoiceAgentV2AppPage({
   const [speakOn, setSpeakOn] = useState(false);
   const [running, setRunning] = useState(false);
   const [signal, setSignal] = useState<VoiceAgentV2Signal>("green");
-  const [technical, setTechnical] = useState<VoiceAgentV2TurnResult | { status?: unknown; realtime?: unknown; event?: unknown } | null>(null);
-  const [realtimeState, setRealtimeState] = useState<VoiceAgentV2RealtimeState>({ peerState: "none", dataChannelState: "none", outgoingMicEnabled: false, outgoingMicReason: "listen_off" });
+  const [technical, setTechnical] = useState<VoiceAgentV2TurnResult | VoiceAgentV2RealtimeVoicePack | VoiceAgentV2RealtimeVoicePackTurn | VoiceAgentV2RealtimeAudioRoundtrip | { status?: unknown; realtime?: unknown; event?: unknown } | null>(null);
+  const [packConnectionState, setPackConnectionState] = useState<"idle" | "starting" | "listening" | "sending" | "playing" | "error">("idle");
+  const [sendActive, setSendActive] = useState(false);
+  const [sendStatusText, setSendStatusText] = useState("NOT SEND - listen off");
+  const [debugVoiceDestination, setDebugVoiceDestination] = useState<VoiceAgentV2VoiceDestination>("ai");
+  const [roundtripEndpoint, setRoundtripEndpoint] = useState("/api/voice-agent/audio-roundtrip");
+  const [voiceThreshold, setVoiceThreshold] = useState(0.025);
+  const [silenceMs, setSilenceMs] = useState(650);
+  const [maxSegmentMs, setMaxSegmentMs] = useState(6000);
+  const [recorderWhileListening, setRecorderWhileListening] = useState(true);
   const [micLevel, setMicLevel] = useState(0);
   const [micVoiceDetected, setMicVoiceDetected] = useState(false);
   const [realtimeTextDraft, setRealtimeTextDraft] = useState("");
+  const [latestPack, setLatestPack] = useState<VoiceAgentV2RealtimeVoicePack | null>(null);
+  const [latestTurn, setLatestTurn] = useState<VoiceAgentV2RealtimeVoicePackTurn | null>(null);
+  const [latestRoundtrip, setLatestRoundtrip] = useState<VoiceAgentV2RealtimeAudioRoundtrip | null>(null);
+  const [voiceEvents, setVoiceEvents] = useState<Array<{ id: string; createdAt: string; type: string; event: unknown }>>([]);
   const messagesRef = useRef(messages);
   const settingsRef = useRef(settings);
   const speakOnRef = useRef(speakOn);
-  const realtimeConnectionRef = useRef<VoiceAgentV2RealtimeConnection | null>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
-  const micMonitorRef = useRef<{ stop: () => void } | null>(null);
-  const remoteAudioRef = useRef<HTMLAudioElement | null>(null);
   const responseTextRef = useRef("");
+  const stopListenRef = useRef(false);
+  const listenLoopRef = useRef(false);
+  const appSpeakingRef = useRef(false);
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -69,15 +86,11 @@ export function VoiceAgentV2AppPage({
   useEffect(() => {
     return () => {
       stopRealtime();
-      messages.forEach((message) => {
+      messagesRef.current.forEach((message) => {
         if (message.audioUrl) URL.revokeObjectURL(message.audioUrl);
       });
     };
   }, []);
-
-  useEffect(() => {
-    if (remoteAudioRef.current) remoteAudioRef.current.muted = !speakOn;
-  }, [speakOn]);
 
   async function sendText() {
     const value = text.trim();
@@ -101,91 +114,215 @@ export function VoiceAgentV2AppPage({
   }
 
   async function startListen() {
-    if (realtimeConnectionRef.current) return;
-    setRunning(true);
+    if (listenLoopRef.current) return;
+    const voiceDestination: VoiceAgentV2VoiceDestination = debug ? debugVoiceDestination : "ai";
+    const captureThreshold = debug ? voiceThreshold : 0.025;
+    const captureSilenceMs = debug ? silenceMs : 650;
+    const captureMaxSegmentMs = debug ? maxSegmentMs : 6000;
+    const captureRecorderWhileListening = debug ? recorderWhileListening : true;
+    stopListenRef.current = false;
+    listenLoopRef.current = true;
     setListenOn(true);
+    setPackConnectionState("starting");
+    setSendStatusText("NOT SEND - opening microphone");
+    setLatestPack(null);
+    setLatestTurn(null);
+    setLatestRoundtrip(null);
+    setVoiceEvents([]);
     try {
       const mic = await VOICE_AGENT_V2_REALTIME_OPEN_MICROPHONE();
       if (!mic.status.ok || !mic.stream) throw new Error(mic.status.error || "Microphone did not open.");
       localStreamRef.current = mic.stream;
-      micMonitorRef.current = VOICE_AGENT_V2_REALTIME_MONITOR_MIC({
-        stream: mic.stream,
-        threshold: 0.025,
-        onSample: (sample) => {
-          setMicLevel(sample.rms);
-          setMicVoiceDetected(sample.voiceDetected);
+      setPackConnectionState("listening");
+      setSendStatusText("NOT SEND - listening for voice");
+      if (voiceDestination === "server_roundtrip") {
+        addVoiceEvent("server_roundtrip_started", {
+          endpoint: roundtripEndpoint,
+          behavior: "listen, decide SEND or SKIP, echo sent voice packs, autoplay returned audio"
+        });
+      }
+
+      while (!stopListenRef.current) {
+        const pack = await VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK({
+          stream: mic.stream,
+          threshold: captureThreshold,
+          silenceMs: captureSilenceMs,
+          preBufferMs: 1000,
+          recorderWhileListening: captureRecorderWhileListening,
+          maxWaitMs: 8000,
+          maxRecordMs: captureMaxSegmentMs,
+          minVoiceMs: 180,
+          onSample: (sample) => {
+            setMicLevel(sample.rms);
+            setMicVoiceDetected(sample.voiceDetected);
+          },
+          shouldStop: () => stopListenRef.current,
+          shouldSkipSend: () => appSpeakingRef.current
+        });
+        setLatestPack(pack);
+        setTechnical(pack);
+        addVoiceEvent(pack.decision, {
+          destination: voiceDestination,
+          status: pack.status,
+          debug: pack.debug
+        });
+
+        if (stopListenRef.current) break;
+        if (pack.decision !== "send_voice_segment" || !pack.audio) {
+          setSendActive(false);
+          setSendStatusText(pack.debug.reason);
+          await wait(100);
+          continue;
         }
-      });
-      const secret = await VOICE_AGENT_V2_REALTIME_CREATE_CLIENT_SECRET({
-        settings: settingsRef.current,
-        visibleHistory: VOICE_AGENT_V2_VISIBLE_HISTORY(messagesRef.current)
-      });
-      setTechnical({ status: "client_secret_created", realtime: redactRealtimeSecret(secret.data) });
-      const connection = await VOICE_AGENT_V2_REALTIME_CONNECT({
-        stream: mic.stream,
-        clientSecret: secret.clientSecret,
-        listenEnabled: true,
-        suppressSpeakerFeedback: true,
-        onRemoteStream: (stream) => {
-          if (!remoteAudioRef.current) return;
-          remoteAudioRef.current.srcObject = stream;
-          remoteAudioRef.current.muted = !speakOnRef.current;
-          void remoteAudioRef.current.play().catch((error) => setTechnical({ status: "remote_audio_play_error", realtime: error instanceof Error ? error.message : String(error) }));
-        },
-        onEvent: handleRealtimeEvent,
-        onState: setRealtimeState
-      });
-      if (!connection.status.ok) throw new Error(connection.status.error || "Realtime connection failed.");
-      realtimeConnectionRef.current = connection;
-      setTechnical({ status: connection.status, realtime: "streaming_webrtc_connected" });
+
+        setSendActive(true);
+        setSendStatusText(voiceDestination === "server_roundtrip" ? `SEND - server echo ${pack.audio.size} bytes` : `SEND - voice pack ${pack.audio.size} bytes`);
+        setRunning(true);
+        setPackConnectionState("sending");
+        setRealtimeTextDraft("");
+        responseTextRef.current = "";
+
+        if (voiceDestination === "server_roundtrip") {
+          const returned = await VOICE_AGENT_V2_REALTIME_SERVER_AUDIO_ROUNDTRIP({
+            endpoint: roundtripEndpoint,
+            audio: pack.audio
+          });
+          setLatestRoundtrip(returned);
+          setTechnical(returned);
+          setRunning(false);
+          addVoiceEvent(returned.status.ok ? "server_returned_audio_autoplay" : "server_roundtrip_error", {
+            status: returned.status,
+            debug: returned.debug
+          });
+          if (!returned.status.ok || !returned.audio) {
+            setSendActive(false);
+            setSendStatusText(`NOT SEND - ${returned.status.error || "server roundtrip failed"}`);
+            await wait(250);
+            continue;
+          }
+          const returnedAudioUrl = URL.createObjectURL(returned.audio);
+          try {
+            await playAssistantAudio(returnedAudioUrl, "NOT SEND - server echo playing");
+          } finally {
+            URL.revokeObjectURL(returnedAudioUrl);
+          }
+          setPackConnectionState("listening");
+          setSendActive(false);
+          setSendStatusText("NOT SEND - listening for voice");
+          continue;
+        }
+
+        const turn = await VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK({
+          settings: settingsRef.current,
+          audio: pack.audio,
+          visibleHistory: VOICE_AGENT_V2_VISIBLE_HISTORY(messagesRef.current),
+          onEvent: handleVoicePackEvent
+        });
+        setLatestTurn(turn);
+        setTechnical(turn);
+        setRunning(false);
+
+        const correctionLevel = turn.correctionEvent?.correction ?? 0;
+        setSignal(VOICE_AGENT_V2_SIGNAL(correctionLevel));
+        const audioUrl = turn.audio ? URL.createObjectURL(turn.audio.blob) : undefined;
+        if (turn.text.trim() || audioUrl) {
+          const assistantMessage: VoiceAgentChatMessage & { audioUrl?: string; correctionLevel?: number } = {
+            id: createId(),
+            role: "assistant",
+            text: turn.text.trim() || "Audio response",
+            createdAt: new Date().toISOString(),
+            audioUrl,
+            correctionLevel
+          };
+          setMessages((current) => [...current, assistantMessage].slice(-40));
+        }
+        setRealtimeTextDraft("");
+        responseTextRef.current = "";
+
+        if (speakOnRef.current && audioUrl) {
+          await playAssistantAudio(audioUrl);
+        }
+        setPackConnectionState("listening");
+        setSendActive(false);
+        setSendStatusText("NOT SEND - listening for voice");
+      }
     } catch (error) {
-      setTechnical({ status: "realtime_error", realtime: error instanceof Error ? error.message : String(error) });
+      setPackConnectionState("error");
+      setTechnical({ status: "voice_pack_error", realtime: error instanceof Error ? error.message : String(error) });
       stopRealtime();
     } finally {
+      localStreamRef.current?.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+      listenLoopRef.current = false;
       setRunning(false);
+      setListenOn(false);
+      if (!stopListenRef.current) setPackConnectionState("idle");
+      setSendActive(false);
+      setSendStatusText("NOT SEND - listen off");
     }
   }
 
   function stopRealtime() {
-    micMonitorRef.current?.stop();
-    micMonitorRef.current = null;
-    realtimeConnectionRef.current?.stop();
-    realtimeConnectionRef.current = null;
+    stopListenRef.current = true;
     localStreamRef.current?.getTracks().forEach((track) => track.stop());
     localStreamRef.current = null;
-    if (remoteAudioRef.current) {
-      remoteAudioRef.current.pause();
-      remoteAudioRef.current.srcObject = null;
-    }
-    setRealtimeState({ peerState: "none", dataChannelState: "none", outgoingMicEnabled: false, outgoingMicReason: "listen_off" });
+    audioPlayerRef.current?.pause();
+    audioPlayerRef.current = null;
+    appSpeakingRef.current = false;
+    setPackConnectionState("idle");
+    setSendActive(false);
+    setSendStatusText("NOT SEND - listen off");
     setMicVoiceDetected(false);
+    setRealtimeTextDraft("");
+    responseTextRef.current = "";
     setListenOn(false);
   }
 
-  function handleRealtimeEvent(event: unknown) {
+  function addVoiceEvent(type: string, event: unknown) {
+    setVoiceEvents((current) => [{
+      id: createId(),
+      createdAt: new Date().toISOString(),
+      type,
+      event: summarizeVoicePackEvent(event)
+    }, ...current].slice(0, 40));
+  }
+
+  function handleVoicePackEvent(event: unknown) {
     const result = VOICE_AGENT_V2_REALTIME_EVENT_RESULT(event);
-    setTechnical({ status: "realtime_event", event });
-    if (result.aiSpeaking !== undefined) realtimeConnectionRef.current?.setAiSpeaking(result.aiSpeaking);
-    if (result.error) setTechnical({ status: "realtime_error", realtime: result.error, event });
+    addVoiceEvent(result.type, event);
+    if (result.correctionEvent) setSignal(VOICE_AGENT_V2_SIGNAL(result.correctionEvent.correction));
+    if (result.error) setTechnical({ status: "voice_pack_error", realtime: result.error, event });
     if (result.textDelta) {
       responseTextRef.current = `${responseTextRef.current}${result.textDelta}`;
       setRealtimeTextDraft(responseTextRef.current);
     }
     if (result.textDone) {
       responseTextRef.current = result.textDone || responseTextRef.current;
-      const text = responseTextRef.current.trim();
-      if (text) {
-        const assistantMessage: VoiceAgentChatMessage = {
-          id: createId(),
-          role: "assistant",
-          text,
-          createdAt: new Date().toISOString()
-        };
-        setMessages((current) => [...current, assistantMessage].slice(-40));
-      }
-      responseTextRef.current = "";
-      setRealtimeTextDraft("");
+      setRealtimeTextDraft(responseTextRef.current);
     }
+  }
+
+  async function playAssistantAudio(url: string, statusText = "NOT SEND - AI speaking") {
+    appSpeakingRef.current = true;
+    setPackConnectionState("playing");
+    setSendActive(false);
+    setSendStatusText(statusText);
+    await new Promise<void>((resolve) => {
+      const player = new Audio(url);
+      audioPlayerRef.current = player;
+      const finish = () => {
+        if (audioPlayerRef.current === player) audioPlayerRef.current = null;
+        appSpeakingRef.current = false;
+        resolve();
+      };
+      player.onended = finish;
+      player.onerror = finish;
+      player.onpause = finish;
+      void player.play().catch((error) => {
+        setTechnical({ status: "audio_play_error", realtime: error instanceof Error ? error.message : String(error) });
+        finish();
+      });
+    });
   }
 
   function toggleListen() {
@@ -259,8 +396,6 @@ export function VoiceAgentV2AppPage({
           )}
         </section>
 
-        <audio ref={remoteAudioRef} autoPlay playsInline />
-
         <div className="chat-composer">
           <textarea
             value={text}
@@ -289,23 +424,86 @@ export function VoiceAgentV2AppPage({
               <pre>{JSON.stringify(VOICE_AGENT_V2_CREATE_PROMPTS(settings), null, 2)}</pre>
             </section>
             <section className="method-panel">
-              <h2>Realtime Stream</h2>
+              <h2>Voice Pack Loop</h2>
+              <label className="field">
+                <span>voice destination</span>
+                <select value={debugVoiceDestination} onChange={(event) => setDebugVoiceDestination(event.target.value as VoiceAgentV2VoiceDestination)} disabled={listenOn}>
+                  <option value="ai">AI voice response</option>
+                  <option value="server_roundtrip">Server audio roundtrip</option>
+                </select>
+              </label>
+              <label className="field">
+                <span>server roundtrip endpoint</span>
+                <input value={roundtripEndpoint} onChange={(event) => setRoundtripEndpoint(event.target.value)} disabled={listenOn || debugVoiceDestination !== "server_roundtrip"} />
+              </label>
+              <label className="field">
+                <span>voice threshold</span>
+                <input type="number" value={voiceThreshold} min={0.001} max={0.2} step={0.001} onChange={(event) => setVoiceThreshold(Number(event.target.value))} disabled={listenOn} />
+              </label>
+              <label className="field">
+                <span>silence ms</span>
+                <input type="number" value={silenceMs} min={200} step={50} onChange={(event) => setSilenceMs(Number(event.target.value))} disabled={listenOn} />
+              </label>
+              <label className="field">
+                <span>max pack ms</span>
+                <input type="number" value={maxSegmentMs} min={1000} step={500} onChange={(event) => setMaxSegmentMs(Number(event.target.value))} disabled={listenOn} />
+              </label>
+              <label className="check-row">
+                <input type="checkbox" checked={recorderWhileListening} onChange={(event) => setRecorderWhileListening(event.target.checked)} disabled={listenOn} />
+                <span>record while listening</span>
+              </label>
+              <SignalLine label="connection" active={packConnectionState === "listening" || packConnectionState === "sending" || packConnectionState === "playing"} value={packConnectionState} />
+              <SignalLine label="local mic voice" active={micVoiceDetected} value={`${micVoiceDetected ? "voice/sound" : "no voice"} rms=${micLevel}`} />
+              <ServerSendLamp active={sendActive} value={sendStatusText} />
+              <SignalLine label="playback block" active={packConnectionState === "playing"} value={packConnectionState === "playing" ? "YES - pack capture blocked" : "NO"} />
               <pre>{JSON.stringify({
-                mode: "browser microphone -> WebRTC realtime AI -> remote audio stream",
+                mode: debugVoiceDestination === "server_roundtrip"
+                  ? "browser microphone -> local VAD/prebuffer -> SEND only voice pack -> server audio roundtrip -> autoplay returned audio"
+                  : "browser microphone -> local VAD/prebuffer -> SEND only voice pack -> AI voice turn stream",
+                destination: debugVoiceDestination,
+                roundtripEndpoint,
+                connection: packConnectionState,
                 mic: { rms: micLevel, voiceDetected: micVoiceDetected },
-                state: realtimeState,
+                send: { active: sendActive, text: sendStatusText },
                 speakOn,
-                textDraft: realtimeTextDraft
+                textDraft: realtimeTextDraft,
+                latestPack: latestPack ? { decision: latestPack.decision, debug: latestPack.debug } : null,
+                latestTurn: latestTurn ? { status: latestTurn.status, text: latestTurn.text, correctionEvent: latestTurn.correctionEvent } : null,
+                latestRoundtrip: latestRoundtrip ? { status: latestRoundtrip.status, debug: latestRoundtrip.debug } : null
               }, null, 2)}</pre>
             </section>
             <section className="method-panel">
               <h2>Latest V2 Result</h2>
               <pre>{JSON.stringify(technical || { status: "not run" }, null, 2)}</pre>
             </section>
+            <section className="method-panel">
+              <h2>Voice Pack Events</h2>
+              <pre>{JSON.stringify(voiceEvents, null, 2)}</pre>
+            </section>
           </div>
         </section>
       )}
     </section>
+  );
+}
+
+function SignalLine({ label, active, value }: { label: string; active: boolean; value: string }) {
+  return (
+    <div className="step done">
+      <strong>{label}</strong>
+      <span>{active ? "active" : "idle"}</span>
+      <p>{value}</p>
+    </div>
+  );
+}
+
+function ServerSendLamp({ active, value }: { active: boolean; value: string }) {
+  return (
+    <div className={`step ${active ? "done" : "error"}`}>
+      <strong>send lamp</strong>
+      <span>{active ? "SEND" : "NOT SEND"}</span>
+      <p>{value}</p>
+    </div>
   );
 }
 
@@ -364,9 +562,13 @@ function createId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function redactRealtimeSecret(value: unknown) {
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function summarizeVoicePackEvent(value: unknown) {
   return JSON.parse(JSON.stringify(value, (key, item) => {
-    if ((key === "value" || key === "secret") && typeof item === "string") return `[secret length=${item.length}]`;
+    if (typeof item === "string" && (key.toLowerCase().includes("audio") || item.length > 500)) return `[string length=${item.length}]`;
     return item;
   }));
 }

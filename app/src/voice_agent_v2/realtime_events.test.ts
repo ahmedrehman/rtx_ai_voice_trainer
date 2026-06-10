@@ -147,3 +147,59 @@ test("VOICE_AGENT_V2_REALTIME_EVENT_RESULT reads prompt fields from plain realti
     }
   );
 });
+
+test("VOICE_AGENT_V2_REALTIME_EVENT_RESULT ignores session instructions", () => {
+  assert.deepEqual(
+    VOICE_AGENT_V2_REALTIME_EVENT_RESULT({
+      type: "session.updated",
+      session: {
+        instructions: [
+          "You are AI Voice Trainer in a realtime speech-to-speech browser app.",
+          "Correction mode is enabled.",
+          "For spoken correction labels, use Exacte, Mieux, or Correction.",
+          "Never say the English word Hint."
+        ].join(" ")
+      }
+    }),
+    {
+      type: "session.updated"
+    }
+  );
+});
+
+test("VOICE_AGENT_V2_REALTIME_EVENT_RESULT reads live voice pack stream events", () => {
+  assert.deepEqual(
+    VOICE_AGENT_V2_REALTIME_EVENT_RESULT({
+      type: "text_delta",
+      text: "Mieux: liaison plus claire."
+    }),
+    {
+      type: "text_delta",
+      correctionEvent: {
+        correction: 1,
+        text: "liaison plus claire.",
+        hint: undefined,
+        raw: "Mieux: liaison plus claire."
+      },
+      textDelta: "liaison plus claire."
+    }
+  );
+
+  assert.deepEqual(
+    VOICE_AGENT_V2_REALTIME_EVENT_RESULT({
+      type: "done",
+      text: "Correction: Je suis malade."
+    }),
+    {
+      type: "done",
+      aiSpeaking: false,
+      correctionEvent: {
+        correction: 3,
+        text: "Je suis malade.",
+        hint: undefined,
+        raw: "Correction: Je suis malade."
+      },
+      textDone: "Je suis malade."
+    }
+  );
+});

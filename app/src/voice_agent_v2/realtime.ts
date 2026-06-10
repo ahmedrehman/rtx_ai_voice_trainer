@@ -1,4 +1,10 @@
-import type { VoiceAgentV2Settings, VoiceAgentV2VisibleHistoryItem } from ".";
+import { VOICE_AGENT_STREAM_VOICE_TURN, type VoiceAgentStreamVoiceTurnEvent } from "../voice_agent";
+import {
+  VOICE_AGENT_V2_CREATE_PROMPTS,
+  VOICE_AGENT_V2_VISIBLE_HISTORY_TEXT,
+  type VoiceAgentV2Settings,
+  type VoiceAgentV2VisibleHistoryItem
+} from ".";
 
 export type VoiceAgentV2RealtimeStatus = {
   method: string;
@@ -37,6 +43,57 @@ export type VoiceAgentV2RealtimeCorrectionEvent = {
   text?: string;
   hint?: string;
   raw: unknown;
+};
+
+export type VoiceAgentV2RealtimeVoicePackDecision =
+  | "send_voice_segment"
+  | "skip_no_voice"
+  | "skip_too_short"
+  | "skip_empty_audio"
+  | "skip_ai_speaking";
+
+export type VoiceAgentV2RealtimeVoicePack = {
+  status: VoiceAgentV2RealtimeStatus;
+  decision: VoiceAgentV2RealtimeVoicePackDecision;
+  audio: Blob | null;
+  debug: {
+    threshold: number;
+    silenceMs: number;
+    preBufferMs: number;
+    preBufferIncludedMs: number;
+    maxWaitMs: number;
+    maxRecordMs: number;
+    minVoiceMs: number;
+    voiceActiveMs: number;
+    durationMs: number;
+    maxRms: number;
+    averageRms: number;
+    mimeType: string;
+    size: number;
+    reason: string;
+  };
+};
+
+export type VoiceAgentV2RealtimeVoicePackTurn = {
+  status: VoiceAgentV2RealtimeStatus;
+  text: string;
+  audio: { blob: Blob; audioFormat: string; chunkCount: number } | null;
+  events: VoiceAgentStreamVoiceTurnEvent[];
+  request: unknown;
+  correctionEvent?: VoiceAgentV2RealtimeCorrectionEvent;
+};
+
+export type VoiceAgentV2RealtimeAudioRoundtrip = {
+  status: VoiceAgentV2RealtimeStatus;
+  audio: Blob | null;
+  debug: {
+    endpoint: string;
+    requestContentType: string;
+    requestSize: number;
+    responseContentType: string;
+    responseSize: number;
+    durationMs: number;
+  };
 };
 
 type BrowserAudioContextConstructor = typeof AudioContext;
@@ -115,6 +172,331 @@ export function VOICE_AGENT_V2_REALTIME_MONITOR_MIC(input: {
       void context.close().catch(() => undefined);
     }
   };
+}
+
+export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
+  stream: MediaStream;
+  threshold?: number;
+  silenceMs?: number;
+  preBufferMs?: number;
+  recorderWhileListening?: boolean;
+  maxWaitMs?: number;
+  maxRecordMs?: number;
+  minVoiceMs?: number;
+  mimeType?: string;
+  onSample?: (sample: { rms: number; voiceDetected: boolean }) => void;
+  shouldStop?: () => boolean;
+  shouldSkipSend?: () => boolean;
+}): Promise<VoiceAgentV2RealtimeVoicePack> {
+  const startedAt = new Date().toISOString();
+  const threshold = input.threshold ?? 0.025;
+  const silenceMs = input.silenceMs ?? 650;
+  const preBufferMs = Math.max(0, input.preBufferMs ?? 1000);
+  const recorderWhileListening = input.recorderWhileListening ?? true;
+  const maxWaitMs = input.maxWaitMs ?? 8000;
+  const maxRecordMs = input.maxRecordMs ?? 6000;
+  const minVoiceMs = input.minVoiceMs ?? 180;
+  const sampleEveryMs = 50;
+  const startedMs = Date.now();
+  let voiceActiveMs = 0;
+  let durationMs = 0;
+  let maxRms = 0;
+  let totalRms = 0;
+  let sampleCount = 0;
+  let mimeType = input.mimeType || "";
+  let size = 0;
+  let preBufferIncludedMs = 0;
+
+  try {
+    if (input.shouldSkipSend?.()) {
+      return voicePackOutput(startedAt, "skip_ai_speaking", null, {
+        threshold,
+        silenceMs,
+        preBufferMs,
+        preBufferIncludedMs,
+        maxWaitMs,
+        maxRecordMs,
+        minVoiceMs,
+        voiceActiveMs,
+        durationMs: Date.now() - startedMs,
+        maxRms,
+        averageRms: 0,
+        mimeType,
+        size,
+        reason: "NOT SEND - AI audio is playing, so microphone input may be speaker feedback."
+      });
+    }
+    if (typeof MediaRecorder === "undefined") throw new Error("Browser MediaRecorder API is unavailable.");
+    const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextConstructor) throw new Error("Browser AudioContext is unavailable.");
+    const context = new AudioContextConstructor();
+    const source = context.createMediaStreamSource(input.stream);
+    const analyser = context.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    const samples = new Uint8Array(analyser.fftSize);
+    const recorderMimeType = chooseMediaRecorderMimeType(input.mimeType);
+    let audio: Blob | null;
+
+    if (!recorderWhileListening) {
+      audio = await captureVoicePackAfterStart({
+        input,
+        context,
+        source,
+        analyser,
+        samples,
+        recorderMimeType,
+        threshold,
+        silenceMs,
+        maxWaitMs,
+        maxRecordMs,
+        sampleEveryMs,
+        startedMs,
+        updateStats: (rms, voiceDetected) => {
+          sampleCount += 1;
+          totalRms += rms;
+          maxRms = Math.max(maxRms, rms);
+          if (voiceDetected) voiceActiveMs += sampleEveryMs;
+        },
+        setMimeType: (value) => {
+          mimeType = value;
+        },
+        setSize: (value) => {
+          size = value;
+        }
+      });
+    } else {
+      audio = await captureVoicePackWithPrebuffer({
+        input,
+        context,
+        source,
+        analyser,
+        samples,
+        recorderMimeType,
+        threshold,
+        silenceMs,
+        preBufferMs,
+        maxWaitMs,
+        maxRecordMs,
+        sampleEveryMs,
+        startedMs,
+        updateStats: (rms, voiceDetected) => {
+          sampleCount += 1;
+          totalRms += rms;
+          maxRms = Math.max(maxRms, rms);
+          if (voiceDetected) voiceActiveMs += sampleEveryMs;
+        },
+        setMimeType: (value) => {
+          mimeType = value;
+        },
+        setSize: (value) => {
+          size = value;
+        },
+        setPreBufferIncludedMs: (value) => {
+          preBufferIncludedMs = value;
+        }
+      });
+    }
+
+    durationMs = Date.now() - startedMs;
+    if (!audio) {
+      return voicePackOutput(startedAt, "skip_no_voice", null, {
+        threshold,
+        silenceMs,
+        preBufferMs,
+        preBufferIncludedMs,
+        maxWaitMs,
+        maxRecordMs,
+        minVoiceMs,
+        voiceActiveMs,
+        durationMs,
+        maxRms,
+        averageRms: averageRms(totalRms, sampleCount),
+        mimeType,
+        size,
+        reason: input.shouldStop?.() ? "NOT SEND - stopped before a voice pack completed." : "NOT SEND - no voice crossed the threshold before maxWaitMs."
+      });
+    }
+    if (audio.size <= 0) {
+      return voicePackOutput(startedAt, "skip_empty_audio", null, {
+        threshold,
+        silenceMs,
+        preBufferMs,
+        preBufferIncludedMs,
+        maxWaitMs,
+        maxRecordMs,
+        minVoiceMs,
+        voiceActiveMs,
+        durationMs,
+        maxRms,
+        averageRms: averageRms(totalRms, sampleCount),
+        mimeType: audio.type,
+        size: audio.size,
+        reason: "NOT SEND - recorder produced an empty audio pack."
+      });
+    }
+    if (voiceActiveMs < minVoiceMs) {
+      return voicePackOutput(startedAt, "skip_too_short", audio, {
+        threshold,
+        silenceMs,
+        preBufferMs,
+        preBufferIncludedMs,
+        maxWaitMs,
+        maxRecordMs,
+        minVoiceMs,
+        voiceActiveMs,
+        durationMs,
+        maxRms,
+        averageRms: averageRms(totalRms, sampleCount),
+        mimeType: audio.type,
+        size: audio.size,
+        reason: "NOT SEND - voice activity was too short."
+      });
+    }
+    return voicePackOutput(startedAt, "send_voice_segment", audio, {
+      threshold,
+      silenceMs,
+      preBufferMs,
+      preBufferIncludedMs,
+      maxWaitMs,
+      maxRecordMs,
+      minVoiceMs,
+      voiceActiveMs,
+      durationMs,
+      maxRms,
+      averageRms: averageRms(totalRms, sampleCount),
+      mimeType: audio.type,
+      size: audio.size,
+      reason: "SEND - voice crossed the threshold and ended after silence."
+    });
+  } catch (error) {
+    return {
+      status: errorStatus("VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK", startedAt, error),
+      decision: "skip_empty_audio",
+      audio: null,
+      debug: {
+        threshold,
+        silenceMs,
+        preBufferMs,
+        preBufferIncludedMs,
+        maxWaitMs,
+        maxRecordMs,
+        minVoiceMs,
+        voiceActiveMs,
+        durationMs: Date.now() - startedMs,
+        maxRms,
+        averageRms: averageRms(totalRms, sampleCount),
+        mimeType,
+        size,
+        reason: error instanceof Error ? error.message : String(error)
+      }
+    };
+  }
+}
+
+export async function VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK(input: {
+  settings: VoiceAgentV2Settings;
+  audio: Blob;
+  visibleHistory: VoiceAgentV2VisibleHistoryItem[];
+  onEvent?: (event: VoiceAgentStreamVoiceTurnEvent) => void;
+}): Promise<VoiceAgentV2RealtimeVoicePackTurn> {
+  const startedAt = new Date().toISOString();
+  const events: VoiceAgentStreamVoiceTurnEvent[] = [];
+  let correctionEvent: VoiceAgentV2RealtimeCorrectionEvent | undefined;
+  try {
+    const result = await VOICE_AGENT_STREAM_VOICE_TURN({
+      settings: {
+        ...input.settings,
+        prompts: VOICE_AGENT_V2_CREATE_PROMPTS(input.settings)
+      },
+      audio: input.audio,
+      textUserChat: "",
+      history5LastTextChats: input.settings.allowFreeChat ? VOICE_AGENT_V2_VISIBLE_HISTORY_TEXT(input.visibleHistory) : [],
+      additionalInstructions: [
+        "This is one VAD-approved voice pack. Answer only this pack.",
+        "Use one short signal word when useful: Exacte for no correction, Mieux for a small improvement, Correction for a real mistake.",
+        "Never react to your own previous audio if it appears in the microphone input."
+      ].join("\n"),
+      onEvent: (event) => {
+        events.push(event);
+        const eventResult = VOICE_AGENT_V2_REALTIME_EVENT_RESULT(event);
+        if (eventResult.correctionEvent) correctionEvent = eventResult.correctionEvent;
+        input.onEvent?.(event);
+      }
+    });
+    const finalCorrection = correctionEvent || VOICE_AGENT_V2_REALTIME_EVENT_RESULT({ type: "done", text: result.text }).correctionEvent;
+    return {
+      status: result.status.ok
+        ? doneStatus("VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK", startedAt)
+        : errorStatus("VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK", startedAt, result.status.error || "VOICE_AGENT_STREAM_VOICE_TURN failed."),
+      text: result.text,
+      audio: result.audio
+        ? {
+            blob: base64ToAudioBlob(result.audio.audioBase64, result.audio.audioFormat),
+            audioFormat: result.audio.audioFormat,
+            chunkCount: result.audio.chunkCount
+          }
+        : null,
+      events: result.events.length ? result.events : events,
+      request: result.request,
+      correctionEvent: finalCorrection || undefined
+    };
+  } catch (error) {
+    return {
+      status: errorStatus("VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK", startedAt, error),
+      text: "",
+      audio: null,
+      events,
+      request: null,
+      correctionEvent
+    };
+  }
+}
+
+export async function VOICE_AGENT_V2_REALTIME_SERVER_AUDIO_ROUNDTRIP(input: {
+  endpoint?: string;
+  audio: Blob;
+}): Promise<VoiceAgentV2RealtimeAudioRoundtrip> {
+  const startedAt = new Date().toISOString();
+  const startedMs = Date.now();
+  const endpoint = input.endpoint || "/api/voice-agent/audio-roundtrip";
+  const requestContentType = input.audio.type || "application/octet-stream";
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": requestContentType
+      },
+      body: input.audio
+    });
+    if (!response.ok) throw new Error(await response.text().catch(() => `Audio roundtrip failed with ${response.status}`));
+    const audio = await response.blob();
+    return {
+      status: doneStatus("VOICE_AGENT_V2_REALTIME_SERVER_AUDIO_ROUNDTRIP", startedAt),
+      audio,
+      debug: {
+        endpoint,
+        requestContentType,
+        requestSize: input.audio.size,
+        responseContentType: audio.type || response.headers.get("Content-Type") || "",
+        responseSize: audio.size,
+        durationMs: Date.now() - startedMs
+      }
+    };
+  } catch (error) {
+    return {
+      status: errorStatus("VOICE_AGENT_V2_REALTIME_SERVER_AUDIO_ROUNDTRIP", startedAt, error),
+      audio: null,
+      debug: {
+        endpoint,
+        requestContentType,
+        requestSize: input.audio.size,
+        responseContentType: "",
+        responseSize: 0,
+        durationMs: Date.now() - startedMs
+      }
+    };
+  }
 }
 
 export async function VOICE_AGENT_V2_REALTIME_CONNECT(input: {
@@ -224,11 +606,23 @@ export async function VOICE_AGENT_V2_REALTIME_CONNECT(input: {
 
 export function VOICE_AGENT_V2_REALTIME_EVENT_RESULT(event: unknown): VoiceAgentV2RealtimeEventResult {
   const eventType = typeof event === "object" && event && "type" in event ? String((event as { type?: unknown }).type) : "unknown";
-  const correctionEvent = extractCorrectionEvent(event);
-  if (correctionEvent) {
-    return eventType.includes(".delta")
-      ? { type: eventType, correctionEvent, textDelta: correctionEvent.text }
-      : { type: eventType, correctionEvent, textDone: correctionEvent.text };
+  if (canContainAssistantCorrection(eventType)) {
+    const correctionEvent = extractCorrectionEvent(event);
+    if (correctionEvent) {
+      return eventType.includes(".delta")
+        ? { type: eventType, correctionEvent, textDelta: correctionEvent.text }
+        : { type: eventType, correctionEvent, textDone: correctionEvent.text };
+    }
+  }
+  if (eventType === "text_delta" || eventType === "audio_transcript_delta") {
+    const correctionEvent = extractCorrectionEvent(event);
+    const text = correctionEvent?.text || extractString(event, ["delta", "transcript", "text"]);
+    return correctionEvent ? { type: eventType, correctionEvent, textDelta: text } : { type: eventType, textDelta: text };
+  }
+  if (eventType === "done") {
+    const correctionEvent = extractCorrectionEvent(event);
+    const text = correctionEvent?.text || extractRealtimeText(event);
+    return correctionEvent ? { type: eventType, aiSpeaking: false, correctionEvent, textDone: text } : { type: eventType, aiSpeaking: false, textDone: text };
   }
   if (eventType === "response.audio.done" || eventType === "response.done" || eventType === "output_audio_buffer.stopped") {
     return { type: eventType, aiSpeaking: false, textDone: extractRealtimeText(event) };
@@ -259,7 +653,7 @@ export function VOICE_AGENT_V2_REALTIME_CREATE_INSTRUCTIONS(settings: VoiceAgent
       ? "Answer the user's question naturally. Correct only when the user asks for correction or clearly practices the language."
       : "For practice speech, say only one corrected phrase and one tiny tip when useful. If there is no useful correction, stay silent or give a very short confirmation.",
     "Example correction: Je suis malade, avec etre.",
-    "Do not greet. Do not explain implementation details. Do not say JSON.",
+    "Do not greet. Do not explain implementation details.",
     "If you hear your own previous answer through the microphone, ignore it and stay silent.",
     visibleHistory
   ].join("\n");
@@ -311,6 +705,15 @@ function extractRealtimeText(value: unknown): string {
   };
   walk(value);
   return found.join(" ").trim();
+}
+
+function canContainAssistantCorrection(eventType: string) {
+  return (
+    eventType === "response.done" ||
+    eventType.includes("response.output_text") ||
+    eventType.includes("response.output_audio_transcript") ||
+    eventType.includes("response.function_call_arguments")
+  );
 }
 
 function extractCorrectionEvent(value: unknown): VoiceAgentV2RealtimeCorrectionEvent | null {
@@ -402,15 +805,16 @@ function correctionLevelFromText(value: string): 0 | 1 | 2 | 3 | null {
   const explicit = value.match(/\b(?:correction(?:_level)?|level|severity|niveau)\s*[:=#-]?\s*([0-3])\b/i);
   if (explicit?.[1]) return Number(explicit[1]) as 0 | 1 | 2 | 3;
   const text = value.toLowerCase();
-  if (/\b(no correction|none|ok|correct)\b/.test(text)) return 0;
+  if (/\b(no correction|none|ok|correct|exact|exacte)\b/.test(text)) return 0;
   if (/\b(grammar|grammaire|spelling|orthographe|very wrong)\b/.test(text)) return 3;
   if (/\b(vocabulary|vocabulaire|meaning|important improvement|important correction)\b/.test(text)) return 2;
-  if (/\b(pronunciation|prononciation|accent|small improvement|slight improvement)\b/.test(text)) return 1;
+  if (/\b(correction|corrige|corrigee|corrigée|erreur|mistake)\b/.test(text)) return 3;
+  if (/\b(pronunciation|prononciation|accent|small improvement|slight improvement|mieux)\b/.test(text)) return 1;
   return null;
 }
 
 function isCorrectionTextCandidate(value: string) {
-  return /\b(correction(?:_level)?|level|severity|niveau|grammar|grammaire|spelling|orthographe|pronunciation|prononciation|accent|vocabulary|vocabulaire|meaning|hint|tip|conseil)\b/i.test(
+  return /\b(correction(?:_level)?|level|severity|niveau|grammar|grammaire|spelling|orthographe|pronunciation|prononciation|accent|vocabulary|vocabulaire|meaning|hint|tip|conseil|exacte?|mieux|erreur|mistake)\b/i.test(
     value
   );
 }
@@ -423,7 +827,7 @@ function cleanCorrectionText(value: string) {
   const withoutHint = value.replace(/\b(?:hint|tip|conseil)\s*[:=-]\s*.+$/i, "").trim();
   return withoutHint
     .replace(/^\s*(?:correction(?:_level)?|level|severity|niveau)\s*[:=#-]?\s*[0-3]\s*[:,-]?\s*/i, "")
-    .replace(/^\s*(?:grammar|grammaire|spelling|orthographe|pronunciation|prononciation|accent|vocabulary|vocabulaire|meaning)\s*[:=-]?\s*/i, "")
+    .replace(/^\s*(?:grammar|grammaire|spelling|orthographe|pronunciation|prononciation|accent|vocabulary|vocabulaire|meaning|exacte?|mieux|correction|erreur|mistake)\s*[:=-]?\s*/i, "")
     .trim();
 }
 
@@ -438,6 +842,230 @@ function extractString(value: unknown, keys: string[]) {
     if (typeof record[key] === "string" && record[key].trim()) return record[key].trim();
   }
   return "";
+}
+
+async function captureVoicePackAfterStart(input: {
+  input: Parameters<typeof VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK>[0];
+  context: AudioContext;
+  source: MediaStreamAudioSourceNode;
+  analyser: AnalyserNode;
+  samples: Uint8Array<ArrayBuffer>;
+  recorderMimeType: string;
+  threshold: number;
+  silenceMs: number;
+  maxWaitMs: number;
+  maxRecordMs: number;
+  sampleEveryMs: number;
+  startedMs: number;
+  updateStats: (rms: number, voiceDetected: boolean) => void;
+  setMimeType: (value: string) => void;
+  setSize: (value: number) => void;
+}) {
+  let recorder: MediaRecorder | null = null;
+  const chunks: Blob[] = [];
+  let recordingStartedMs = 0;
+  let lastVoiceMs = 0;
+  let sawVoice = false;
+  let stopped = false;
+
+  return new Promise<Blob | null>((resolve, reject) => {
+    const finish = (value: Blob | null) => {
+      if (stopped) return;
+      stopped = true;
+      window.clearInterval(timer);
+      input.source.disconnect();
+      void input.context.close().catch(() => undefined);
+      resolve(value);
+    };
+    const stopRecorder = () => {
+      if (recorder?.state === "recording") {
+        recorder.stop();
+        return;
+      }
+      finish(null);
+    };
+    const timer = window.setInterval(() => {
+      if (input.input.shouldStop?.() || input.input.shouldSkipSend?.()) {
+        stopRecorder();
+        return;
+      }
+      input.analyser.getByteTimeDomainData(input.samples);
+      const rms = audioRms(input.samples);
+      const voiceDetected = rms >= input.threshold;
+      input.updateStats(rms, Boolean(recorder && voiceDetected));
+      input.input.onSample?.({ rms, voiceDetected });
+      const now = Date.now();
+      if (voiceDetected) {
+        sawVoice = true;
+        lastVoiceMs = now;
+        if (!recorder) {
+          recorder = new MediaRecorder(input.input.stream, input.recorderMimeType ? { mimeType: input.recorderMimeType } : undefined);
+          const mimeType = recorder.mimeType || input.recorderMimeType || "audio/webm";
+          input.setMimeType(mimeType);
+          recordingStartedMs = now;
+          recorder.ondataavailable = (event) => {
+            if (event.data.size > 0) chunks.push(event.data);
+          };
+          recorder.onerror = () => reject(new Error("Browser audio pack recording failed."));
+          recorder.onstop = () => {
+            const blob = new Blob(chunks, { type: mimeType });
+            input.setSize(blob.size);
+            finish(blob);
+          };
+          recorder.start(250);
+        }
+      }
+      if (!recorder && now - input.startedMs >= input.maxWaitMs) {
+        finish(null);
+        return;
+      }
+      if (recorder && now - recordingStartedMs >= input.maxRecordMs) {
+        stopRecorder();
+        return;
+      }
+      if (recorder && sawVoice && now - lastVoiceMs >= input.silenceMs) {
+        stopRecorder();
+      }
+    }, input.sampleEveryMs);
+  });
+}
+
+async function captureVoicePackWithPrebuffer(input: {
+  input: Parameters<typeof VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK>[0];
+  context: AudioContext;
+  source: MediaStreamAudioSourceNode;
+  analyser: AnalyserNode;
+  samples: Uint8Array<ArrayBuffer>;
+  recorderMimeType: string;
+  threshold: number;
+  silenceMs: number;
+  preBufferMs: number;
+  maxWaitMs: number;
+  maxRecordMs: number;
+  sampleEveryMs: number;
+  startedMs: number;
+  updateStats: (rms: number, voiceDetected: boolean) => void;
+  setMimeType: (value: string) => void;
+  setSize: (value: number) => void;
+  setPreBufferIncludedMs: (value: number) => void;
+}) {
+  const recorder = new MediaRecorder(input.input.stream, input.recorderMimeType ? { mimeType: input.recorderMimeType } : undefined);
+  const chunks: Array<{ blob: Blob; receivedAtMs: number }> = [];
+  let speechStartedMs = 0;
+  let lastVoiceMs = 0;
+  let sawVoice = false;
+  let stopped = false;
+
+  return new Promise<Blob | null>((resolve, reject) => {
+    const finish = (value: Blob | null) => {
+      if (stopped) return;
+      stopped = true;
+      window.clearInterval(timer);
+      input.source.disconnect();
+      void input.context.close().catch(() => undefined);
+      resolve(value);
+    };
+    const stopRecorder = (sendAudio: boolean) => {
+      if (recorder.state === "recording") {
+        recorder.onstop = () => {
+          if (!sendAudio) {
+            finish(null);
+            return;
+          }
+          const includeFromMs = speechStartedMs ? speechStartedMs - input.preBufferMs : Date.now();
+          const selectedChunks = chunks.filter((chunk, index) => index === 0 || chunk.receivedAtMs >= includeFromMs).map((chunk) => chunk.blob);
+          const blob = new Blob(selectedChunks, { type: recorder.mimeType || input.recorderMimeType || "audio/webm" });
+          input.setSize(blob.size);
+          finish(blob);
+        };
+        recorder.stop();
+        return;
+      }
+      finish(null);
+    };
+    const mimeType = recorder.mimeType || input.recorderMimeType || "audio/webm";
+    input.setMimeType(mimeType);
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) chunks.push({ blob: event.data, receivedAtMs: Date.now() });
+    };
+    recorder.onerror = () => reject(new Error("Browser audio pack recording failed."));
+    recorder.onstop = () => {
+      const includeFromMs = speechStartedMs ? speechStartedMs - input.preBufferMs : Date.now();
+      const selectedChunks = chunks.filter((chunk, index) => index === 0 || chunk.receivedAtMs >= includeFromMs).map((chunk) => chunk.blob);
+      const blob = new Blob(selectedChunks, { type: mimeType });
+      input.setSize(blob.size);
+      finish(blob);
+    };
+    recorder.start(250);
+    const timer = window.setInterval(() => {
+      if (input.input.shouldStop?.() || input.input.shouldSkipSend?.()) {
+        stopRecorder(false);
+        return;
+      }
+      input.analyser.getByteTimeDomainData(input.samples);
+      const rms = audioRms(input.samples);
+      const voiceDetected = rms >= input.threshold;
+      input.updateStats(rms, voiceDetected);
+      input.input.onSample?.({ rms, voiceDetected });
+      const now = Date.now();
+      if (voiceDetected) {
+        if (!sawVoice) {
+          speechStartedMs = now;
+          input.setPreBufferIncludedMs(Math.min(input.preBufferMs, Math.max(0, now - input.startedMs)));
+        }
+        sawVoice = true;
+        lastVoiceMs = now;
+      }
+      if (!sawVoice && now - input.startedMs >= input.maxWaitMs) {
+        stopRecorder(false);
+        return;
+      }
+      if (sawVoice && now - speechStartedMs >= input.maxRecordMs) {
+        stopRecorder(true);
+        return;
+      }
+      if (sawVoice && now - lastVoiceMs >= input.silenceMs) {
+        stopRecorder(true);
+      }
+    }, input.sampleEveryMs);
+  });
+}
+
+function chooseMediaRecorderMimeType(preferred?: string) {
+  const candidates = [
+    preferred || "",
+    "audio/webm;codecs=opus",
+    "audio/webm",
+    "audio/mp4",
+    "audio/ogg;codecs=opus"
+  ].filter(Boolean);
+  if (typeof MediaRecorder === "undefined" || typeof MediaRecorder.isTypeSupported !== "function") return preferred || "";
+  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || "";
+}
+
+function averageRms(totalRms: number, sampleCount: number) {
+  return Number((sampleCount ? totalRms / sampleCount : 0).toFixed(4));
+}
+
+function voicePackOutput(
+  startedAt: string,
+  decision: VoiceAgentV2RealtimeVoicePackDecision,
+  audio: Blob | null,
+  debug: VoiceAgentV2RealtimeVoicePack["debug"]
+): VoiceAgentV2RealtimeVoicePack {
+  return {
+    status: doneStatus("VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK", startedAt),
+    decision,
+    audio,
+    debug
+  };
+}
+
+function base64ToAudioBlob(base64: string, format: string) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: format.startsWith("audio/") ? format : `audio/${format}` });
 }
 
 function audioRms(samples: Uint8Array<ArrayBuffer>) {
