@@ -1,0 +1,134 @@
+import SwiftUI
+
+struct DebugView: View {
+    @EnvironmentObject private var viewModel: TrainerViewModel
+    @State private var backendResult = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Backend") {
+                    TextField("Backend", text: Binding(
+                        get: { viewModel.config.backendBaseURL.absoluteString },
+                        set: { value in
+                            if let url = URL(string: value) {
+                                viewModel.config.backendBaseURL = url
+                            }
+                        }
+                    ))
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+
+                    Button("Test backend reachable") {
+                        Task { backendResult = await viewModel.testBackendReachable() }
+                    }
+
+                    Button("Request realtime client secret") {
+                        Task { await viewModel.requestRealtimeSecret() }
+                    }
+
+                    if !backendResult.isEmpty {
+                        Text(backendResult)
+                            .font(.footnote.monospaced())
+                            .textSelection(.enabled)
+                    }
+
+                    if !viewModel.realtime.redactedClientSecretJSON.isEmpty {
+                        Text(viewModel.realtime.redactedClientSecretJSON)
+                            .font(.footnote.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
+
+                Section("Microphone") {
+                    Button("Request permission") {
+                        Task { await viewModel.requestMicPermission() }
+                    }
+
+                    HStack {
+                        Button(viewModel.micMonitor.isRunning ? "Stop mic monitor" : "Start mic monitor") {
+                            viewModel.micMonitor.isRunning ? viewModel.stopMicMonitor() : viewModel.startMicMonitor()
+                        }
+                        Spacer()
+                        Text(viewModel.micMonitor.voiceDetected ? "Voice" : "No voice")
+                            .foregroundStyle(viewModel.micMonitor.voiceDetected ? .green : .secondary)
+                    }
+
+                    ProgressView(value: viewModel.micMonitor.rms, total: 0.2)
+                    Text("Input: \(viewModel.audioSession.inputRoute)")
+                    Text("Permission: \(viewModel.audioSession.permissionGranted ? "Granted" : "Not granted")")
+                }
+
+                Section("Speaker") {
+                    Button("Play local tone") {
+                        viewModel.speaker.playTone()
+                    }
+                    Text(viewModel.speaker.status)
+                    Text("Output: \(viewModel.audioSession.outputRoute)")
+                }
+
+                Section("WebRTC AI") {
+                    Button("Connect realtime") {
+                        Task { await viewModel.requestRealtimeSecret() }
+                    }
+                    Button("Disconnect", role: .destructive) {
+                        viewModel.disconnectRealtime()
+                    }
+                    Toggle("Outgoing mic track enabled", isOn: Binding(
+                        get: { viewModel.outgoingMicEnabled },
+                        set: { viewModel.realtime.setListenOn($0, aiSpeaking: viewModel.aiSpeaking) }
+                    ))
+                    LabeledContent("Session", value: viewModel.sessionState.rawValue)
+                    LabeledContent("Peer", value: viewModel.peerState.rawValue)
+                    LabeledContent("Data channel", value: viewModel.dataChannelState.rawValue)
+                    LabeledContent("Remote audio", value: viewModel.remoteAudioMuted ? "Muted" : "Active")
+                    LabeledContent("Mic reason", value: viewModel.outgoingMicReason.rawValue)
+
+                    ForEach(viewModel.realtime.eventLog.indices, id: \.self) { index in
+                        Text(viewModel.realtime.eventLog[index])
+                            .font(.footnote)
+                    }
+                }
+
+                Section("Server Roundtrip") {
+                    HStack {
+                        Button("Record sample") {
+                            viewModel.roundtrip.startRecording()
+                        }
+                        Button("Stop") {
+                            viewModel.roundtrip.stopRecording()
+                        }
+                    }
+
+                    Button("Send to server roundtrip") {
+                        Task { await viewModel.uploadRoundtripRecording() }
+                    }
+
+                    Button("Play returned audio") {
+                        if let data = viewModel.roundtrip.returnedData {
+                            try? viewModel.speaker.play(data: data)
+                        }
+                    }
+                    .disabled(viewModel.roundtrip.returnedData == nil)
+
+                    LabeledContent("Status", value: viewModel.roundtrip.status)
+                    LabeledContent("Request size", value: "\(viewModel.roundtrip.recordedBytes) bytes")
+                    LabeledContent("Response size", value: "\(viewModel.roundtrip.returnedBytes) bytes")
+                    LabeledContent("Content type", value: viewModel.roundtrip.returnedContentType)
+                }
+            }
+            .navigationTitle("Debug")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        viewModel.audioSession.refreshRoute()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .accessibilityLabel("Refresh route")
+                }
+            }
+        }
+    }
+}
+
