@@ -473,10 +473,11 @@ export async function VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK(input: {
         : [
             "This is one user audio pack. Answer only this pack.",
             "If you mark the level, use exactly one app signal word at the start: SignalVert, SignalJaune, SignalOrange, or SignalRouge.",
-            "Use SignalJaune for a small pronunciation/accent improvement.",
+            "A foreign accent is OK when the words are understandable: use SignalVert and do not correct it.",
+            "Use SignalJaune only for a concrete pronunciation/accent improvement that improves clarity.",
             "Use SignalOrange for vocabulary or meaning problems.",
             "Use SignalRouge only for a real grammar mistake or severe meaning mistake.",
-            "Small mispronunciations and accent issues are SignalJaune, not SignalRouge.",
+            "Pronunciation or accent must never be SignalOrange or SignalRouge.",
             "Keep spoken correction text short and natural after the signal word.",
             "Never react to your own previous audio if it appears in the microphone input."
           ].join("\n"),
@@ -717,7 +718,8 @@ export function VOICE_AGENT_V2_REALTIME_CREATE_INSTRUCTIONS(settings: VoiceAgent
     "Reply with spoken audio directly. Keep every answer very short.",
     "Also emit the same short answer as response transcript/text events when available.",
     "Speak in the target language. If you mark the level, use exactly one app signal word at the start: SignalVert, SignalJaune, SignalOrange, or SignalRouge. Never say the English word Hint.",
-    "Use SignalJaune for small pronunciation/accent improvement, SignalOrange for vocabulary or meaning problems, and SignalRouge only for a real grammar mistake or severe meaning mistake. Keep spoken correction text short and natural.",
+    "A foreign accent is OK when the words are understandable: use SignalVert and do not correct it. Use SignalJaune only for a concrete pronunciation/accent improvement that improves clarity. Pronunciation or accent must never be SignalOrange or SignalRouge.",
+    "Use SignalOrange for vocabulary or meaning problems, and SignalRouge only for a real grammar mistake or severe meaning mistake. Keep spoken correction text short and natural.",
     settings.allowFreeChat
       ? "Answer the user's question naturally. Correct only when the user asks for correction or clearly practices the language."
       : "For practice speech, say only one corrected phrase and one tiny tip when useful. If there is no useful correction, stay silent or give a very short confirmation.",

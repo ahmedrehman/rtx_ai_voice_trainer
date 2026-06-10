@@ -80,7 +80,7 @@ export function VOICE_AGENT_V2_CREATE_PROMPTS(settings: VoiceAgentV2Settings): V
   }
   return {
     systemPrompt: [
-      "You are a strict language correction trainer inside a voice app.",
+      "You are a practical language correction trainer inside a voice app.",
       "Return exactly one JSON object as text.",
       "The user-facing answer must be extremely short."
     ].join("\n"),
@@ -97,7 +97,9 @@ export function VOICE_AGENT_V2_CREATE_PROMPTS(settings: VoiceAgentV2Settings): V
       "chat_text_to_user is the chat text and possible speech text.",
       "For corrections, chat_text_to_user must be the short correction only.",
       "Set has_corrections true when there is a useful correction.",
-      "Use correction_type pronunciation/accent for level 1 only. Small pronunciation or accent issues are not high-level mistakes.",
+      "A foreign accent is OK when the words are understandable. Do not correct acceptable learner pronunciation.",
+      "Use correction_type pronunciation/accent for level 1 only when there is a concrete sound-based correction that improves clarity.",
+      "Pronunciation or accent must never be level 2 or level 3. Small pronunciation or accent issues are not high-level mistakes.",
       "Use correction_type vocabulary/meaning for level 2. Use correction_type grammar for level 3 only when the sentence is actually grammatically wrong.",
       "Do not output prose outside JSON."
     ].join("\n"),
