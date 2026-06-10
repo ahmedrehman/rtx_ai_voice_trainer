@@ -59,3 +59,8 @@ npm run build
 ```
 
 The production app is deployed at [aitutor.lernspass.net](https://aitutor.lernspass.net/).
+
+## License
+
+This project is licensed under the GNU General Public License v3.0.
+See the [LICENSE](LICENSE) file for details.

@@ -182,6 +182,12 @@ function App() {
           setVoiceAgentV2Settings={setVoiceAgentV2Settings}
         />
       </section>
+
+      <footer className="legal-footer">
+        <span>Licensed under GNU GPL v3.0.</span>
+        <span>Copyright (c) 2026 Ahmed Rehman.</span>
+        <a href="https://github.com/ahmedrehman/rtx_ai_voice_trainer/blob/master/LICENSE" target="_blank" rel="noreferrer">See LICENSE for details.</a>
+      </footer>
     </main>
   );
 }

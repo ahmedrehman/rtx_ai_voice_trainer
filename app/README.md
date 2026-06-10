@@ -63,3 +63,8 @@ APP_BASE_PATH=/apps/aitutor/
 Runtime provider keys belong in Worker variables and secrets, not Vite browser variables.
 
 See `plan_ai/cloudflare_github_setup.md` for the full GitHub-connected Worker setup.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0.
+See the [LICENSE](../LICENSE) file for details.

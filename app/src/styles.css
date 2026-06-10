@@ -201,6 +201,26 @@ p {
   padding: 16px;
 }
 
+.legal-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  justify-content: center;
+  padding: 0 16px 18px;
+  color: #646464;
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.legal-footer a {
+  color: #9a3f00;
+  text-decoration: none;
+}
+
+.legal-footer a:hover {
+  text-decoration: underline;
+}
+
 .page {
   max-width: 1180px;
   margin: 0 auto;
