@@ -22,6 +22,11 @@ import {
   type VoiceAgentV2RealtimeVoicePack,
   type VoiceAgentV2RealtimeVoicePackTurn
 } from "./realtime";
+import {
+  VOICE_AGENT_V2_DECIDE_APP_TURN,
+  VOICE_AGENT_V2_SHOULD_SPEAK_LEVEL,
+  VOICE_AGENT_V2_SHOULD_STREAM_AUDIO_IMMEDIATELY
+} from "./app_logic";
 import type { VoiceAgentChatMessage, VoiceAgentPromptConfig, VoiceAgentStreamVoiceTurnEvent, VoiceAgentTopicId } from "../voice_agent";
 
 type VoiceAgentV2VoiceDestination = "ai" | "server_roundtrip";
@@ -108,7 +113,7 @@ export function VoiceAgentV2AppPage({
         visibleHistory: VOICE_AGENT_V2_VISIBLE_HISTORY(nextMessages),
         speakEnabled: speakOn
       });
-      applyTurn(result);
+      applyTurn(result, value);
     } finally {
       setRunning(false);
     }
@@ -229,32 +234,41 @@ export function VoiceAgentV2AppPage({
         setRunning(false);
 
         const correctionLevel = turn.correctionEvent?.correction ?? 0;
-        setSignal(VOICE_AGENT_V2_SIGNAL(correctionLevel));
-        const shouldSpeak = speakOnRef.current && shouldSpeakCorrection(correctionLevel, settingsRef.current);
         streamPlayback.setCorrectionLevel(correctionLevel);
         const streamingVoiceStarted = streamPlayback.started();
-        const audioUrl = turn.audio && !streamingVoiceStarted ? URL.createObjectURL(turn.audio.blob) : undefined;
-        const shouldKeepAudioLink = Boolean(audioUrl && !speakOnRef.current);
-        const chatText = voiceTurnChatText(turn.text, correctionLevel);
+        const audioUrl = turn.audio ? URL.createObjectURL(turn.audio.blob) : undefined;
+        const appDecision = VOICE_AGENT_V2_DECIDE_APP_TURN({
+          source: "voice",
+          listenOn: true,
+          speakOn: speakOnRef.current,
+          freeChatOn: settingsRef.current.allowFreeChat,
+          speakLevel: settingsRef.current.speakLevel,
+          userText: "",
+          aiText: turn.text,
+          correctedText: turn.correctionEvent?.text || turn.text,
+          correctionLevel,
+          audioAvailable: Boolean(audioUrl)
+        });
+        setSignal(appDecision.signal);
         setRealtimeTextDraft("");
         responseTextRef.current = "";
 
         let playbackStarted: Promise<void> | null = null;
         let playbackDone: Promise<void> | null = null;
-        if (!streamingVoiceStarted && shouldSpeak && audioUrl) {
+        if (!streamingVoiceStarted && appDecision.shouldAutoPlayAudio && audioUrl) {
           const playback = startAssistantAudioPlayback(audioUrl);
           playbackStarted = playback.started;
-          playbackDone = playback.done.finally(() => URL.revokeObjectURL(audioUrl));
+          playbackDone = playback.done;
         }
         if (playbackStarted) await playbackStarted;
 
-        if (chatText || shouldKeepAudioLink) {
+        if (appDecision.assistantText || appDecision.shouldKeepAudioLink) {
           const assistantMessage: VoiceAgentChatMessage & { audioUrl?: string; correctionLevel?: number } = {
             id: createId(),
             role: "assistant",
-            text: chatText || "Audio response",
+            text: appDecision.assistantText || "Audio response",
             createdAt: new Date().toISOString(),
-            audioUrl: shouldKeepAudioLink ? audioUrl : undefined,
+            audioUrl: appDecision.shouldKeepAudioLink ? audioUrl : undefined,
             correctionLevel
           };
           setMessages((current) => [...current, assistantMessage].slice(-40));
@@ -266,7 +280,7 @@ export function VoiceAgentV2AppPage({
           await playbackDone;
         }
 
-        if (audioUrl && !shouldSpeak && !shouldKeepAudioLink) {
+        if (audioUrl && !appDecision.shouldKeepAudioLink) {
           URL.revokeObjectURL(audioUrl);
         }
         setPackConnectionState("listening");
@@ -319,7 +333,10 @@ export function VoiceAgentV2AppPage({
   function createVoiceStreamPlayback() {
     let context: AudioContext | null = null;
     let scheduledAt = 0;
-    let decision: "waiting" | "play" | "drop" = "waiting";
+    let decision: "waiting" | "play" | "drop" = VOICE_AGENT_V2_SHOULD_STREAM_AUDIO_IMMEDIATELY({
+      freeChatOn: settingsRef.current.allowFreeChat,
+      speakOn: speakOnRef.current
+    }) ? "play" : "waiting";
     let didStart = false;
     let finished = false;
     let stopped = false;
@@ -346,7 +363,11 @@ export function VoiceAgentV2AppPage({
       },
       setCorrectionLevel(level: number) {
         if (decision !== "waiting") return;
-        if (!speakOnRef.current || !shouldSpeakCorrection(level, settingsRef.current)) {
+        if (!VOICE_AGENT_V2_SHOULD_SPEAK_LEVEL({
+          correctionLevel: level,
+          speakOn: speakOnRef.current,
+          speakLevel: settingsRef.current.speakLevel
+        })) {
           decision = "drop";
           pendingAudio.length = 0;
           if (finished) complete();
@@ -517,19 +538,35 @@ export function VoiceAgentV2AppPage({
     void startListen("ai");
   }
 
-  function applyTurn(result: VoiceAgentV2TurnResult) {
-    setSignal(result.signal);
+  function applyTurn(result: VoiceAgentV2TurnResult, userText: string) {
+    const appDecision = VOICE_AGENT_V2_DECIDE_APP_TURN({
+      source: "text",
+      listenOn: false,
+      speakOn: speakOnRef.current,
+      freeChatOn: settingsRef.current.allowFreeChat,
+      speakLevel: settingsRef.current.speakLevel,
+      userText,
+      aiText: result.chatMessage?.text || "",
+      correctedText: result.chatMessage?.text || "",
+      correctionLevel: result.correctionLevel,
+      audioAvailable: Boolean(result.audio)
+    });
+    setSignal(appDecision.signal);
     setTechnical(result);
-    if (!result.chatMessage) return;
-    const assistantMessage = result.chatMessage;
-    const shouldKeepAudio = Boolean(result.audio && !speakOnRef.current);
-    const shouldSpeak = Boolean(result.audio && speakOnRef.current && shouldSpeakCorrection(result.correctionLevel, settingsRef.current));
+    if (!result.chatMessage && !appDecision.assistantText) return;
+    const assistantMessage = result.chatMessage || {
+      id: createId(),
+      role: "assistant" as const,
+      text: appDecision.assistantText,
+      createdAt: new Date().toISOString()
+    };
     setMessages((current) => [...current, {
       ...assistantMessage,
-      audioUrl: shouldKeepAudio ? result.audio?.url : undefined,
+      text: appDecision.assistantText,
+      audioUrl: appDecision.shouldKeepAudioLink ? result.audio?.url : undefined,
       correctionLevel: result.correctionLevel
     }].slice(-40));
-    if (shouldSpeak && result.audio) void new Audio(result.audio.url).play().catch(() => undefined);
+    if (appDecision.shouldAutoPlayAudio && result.audio) void new Audio(result.audio.url).play().catch(() => undefined);
   }
 
   function changeTopic(topicId: VoiceAgentTopicId) {
@@ -561,9 +598,11 @@ export function VoiceAgentV2AppPage({
             </label>
           )}
           <button className="toggle" type="button" onClick={() => setSettings((current) => ({ ...current, allowFreeChat: !current.allowFreeChat }))}>{settings.allowFreeChat ? "Free chat on" : "Free chat off"}</button>
-          <span className="signal-lamp-wrap" aria-live="polite">
-            <span className={`signal-lamp ${signalClass(signal)}`} title={signal} />
-          </span>
+          {!settings.allowFreeChat && (
+            <span className="signal-lamp-wrap" aria-live="polite">
+              <span className={`signal-lamp ${signalClass(signal)}`} title={signal} />
+            </span>
+          )}
         </div>
 
         <section className="chat-window">
@@ -738,21 +777,6 @@ function signalClass(signal: VoiceAgentV2Signal) {
   if (signal === "orange") return "orange";
   if (signal === "red") return "mistake";
   return "idle";
-}
-
-function shouldSpeakCorrection(level: number | undefined, settings: VoiceAgentV2Settings) {
-  const correctionLevel = Number(level || 0);
-  return correctionLevel > 0 && correctionLevel >= settings.speakLevel;
-}
-
-function voiceTurnChatText(text: string, level: number) {
-  const cleaned = stripSignalCodeword(text).trim();
-  if (cleaned) return cleaned;
-  return Number(level || 0) === 0 ? "OK" : "Correction";
-}
-
-function stripSignalCodeword(text: string) {
-  return text.replace(/^\s*(signal\s*(?:vert|jaune|orange|rouge)|signal(?:vert|jaune|orange|rouge))\b\s*[:,-]?\s*/i, "");
 }
 
 function hasStandardLevelWord(value: unknown): boolean {
