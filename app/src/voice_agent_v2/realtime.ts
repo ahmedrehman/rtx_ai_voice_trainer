@@ -463,12 +463,13 @@ export async function VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK(input: {
       textUserChat: "",
       history5LastTextChats: input.settings.allowFreeChat ? VOICE_AGENT_V2_VISIBLE_HISTORY_TEXT(input.visibleHistory) : [],
       additionalInstructions: input.settings.allowFreeChat
-        ? [
-            "This is one user audio pack. Treat it as the current user message.",
-            "Free chat is enabled: answer the user's question or request normally.",
-            "Do not translate unless the user explicitly asks for translation.",
-            "Do not correct unless the user explicitly asks for correction or feedback.",
-            "Never react to your own previous audio if it appears in the microphone input."
+          ? [
+              "This is one user audio pack. Treat it as the current user message.",
+              "Free chat is enabled: answer the user's question or request normally.",
+              "Be as short as possible. For simple questions, answer with only the result.",
+              "Do not translate unless the user explicitly asks for translation.",
+              "Do not correct unless the user explicitly asks for correction or feedback.",
+              "Never react to your own previous audio if it appears in the microphone input."
           ].join("\n")
         : [
             "This is one user audio pack. Answer only this pack.",
@@ -478,7 +479,8 @@ export async function VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK(input: {
             "Use SignalOrange for vocabulary or meaning problems.",
             "Use SignalRouge only for a real grammar mistake or severe meaning mistake.",
             "Pronunciation or accent must never be SignalOrange or SignalRouge.",
-            "Keep spoken correction text short and natural after the signal word.",
+            "Keep spoken correction text as short as possible after the signal word.",
+            "Prefer 2 to 8 words. Never add filler or encouragement.",
             "Never react to your own previous audio if it appears in the microphone input."
           ].join("\n"),
       onEvent: (event) => {
@@ -715,16 +717,17 @@ export function VOICE_AGENT_V2_REALTIME_CREATE_INSTRUCTIONS(settings: VoiceAgent
     `Target language: ${settings.languageName}.`,
     `Topic/context: ${settings.topic}.`,
     mode,
-    "Reply with spoken audio directly. Keep every answer very short.",
+    "Reply with spoken audio directly. Be as short as possible.",
+    "Use one short sentence only. For simple questions, answer with only the result.",
     "Also emit the same short answer as response transcript/text events when available.",
     "Speak in the target language. If you mark the level, use exactly one app signal word at the start: SignalVert, SignalJaune, SignalOrange, or SignalRouge. Never say the English word Hint.",
     "A foreign accent is OK when the words are understandable: use SignalVert and do not correct it. Use SignalJaune only for a concrete pronunciation/accent improvement that improves clarity. Pronunciation or accent must never be SignalOrange or SignalRouge.",
     "Use SignalOrange for vocabulary or meaning problems, and SignalRouge only for a real grammar mistake or severe meaning mistake. Keep spoken correction text short and natural.",
     settings.allowFreeChat
       ? "Answer the user's question naturally. Correct only when the user asks for correction or clearly practices the language."
-      : "For practice speech, say only one corrected phrase and one tiny tip when useful. If there is no useful correction, stay silent or give a very short confirmation.",
+      : "For practice speech, say only one corrected phrase and one tiny tip only if truly necessary. If there is no useful correction, stay silent or give a very short confirmation.",
     "Example correction: Je suis malade, avec etre.",
-    "Do not greet. Do not explain implementation details.",
+    "Do not greet. Do not explain implementation details. Do not add encouragement or filler.",
     "If you hear your own previous answer through the microphone, ignore it and stay silent.",
     visibleHistory
   ].join("\n");

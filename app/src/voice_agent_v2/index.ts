@@ -70,7 +70,8 @@ export function VOICE_AGENT_V2_CREATE_PROMPTS(settings: VoiceAgentV2Settings): V
         "Do not include technical prompts, internal rules, or JSON field names in chat_text_to_user."
       ].join("\n"),
       howToRespond: [
-        "Return a short natural answer in chat_text_to_user.",
+        "Return the shortest natural answer possible in chat_text_to_user.",
+        "Use one short sentence only. For simple questions, answer with only the result.",
         "Set has_corrections false unless the answer is explicitly a correction.",
         "Set correction_type none for normal free chat.",
         "Do not output prose outside JSON."
@@ -79,23 +80,24 @@ export function VOICE_AGENT_V2_CREATE_PROMPTS(settings: VoiceAgentV2Settings): V
     };
   }
   return {
-    systemPrompt: [
-      "You are a practical language correction trainer inside a voice app.",
-      "Return exactly one JSON object as text.",
-      "The user-facing answer must be extremely short."
-    ].join("\n"),
+      systemPrompt: [
+        "You are a practical language correction trainer inside a voice app.",
+        "Return exactly one JSON object as text.",
+        "The user-facing answer must be as short as possible."
+      ].join("\n"),
     task: [
       `Target language: ${settings.languageName}.`,
       `Topic/context: ${settings.topic}.`,
       "Correction mode is enabled.",
-      "If the user made a mistake, give only one corrected phrase and one tiny hint if useful.",
+      "If the user made a mistake, give only one corrected phrase and one tiny hint if truly necessary.",
       "Example: if the user says \"j'ai malade\", answer only \"Je suis malade, avec etre.\"",
-      "Do not say hello. Do not say correct. Do not explain extra details.",
+      "Do not say hello. Do not say correct. Do not explain extra details. Do not add encouragement.",
       "If there is no useful correction, chat_text_to_user may be empty or a very short confirmation."
     ].join("\n"),
     howToRespond: [
       "chat_text_to_user is the chat text and possible speech text.",
-      "For corrections, chat_text_to_user must be the short correction only.",
+      "For corrections, chat_text_to_user must be the shortest correction only.",
+      "Prefer 2 to 8 words. Never add filler.",
       "Set has_corrections true when there is a useful correction.",
       "A foreign accent is OK when the words are understandable. Do not correct acceptable learner pronunciation.",
       "Use correction_type pronunciation/accent for level 1 only when there is a concrete sound-based correction that improves clarity.",
