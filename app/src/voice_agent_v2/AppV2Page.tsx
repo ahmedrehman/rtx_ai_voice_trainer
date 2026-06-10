@@ -125,7 +125,7 @@ export function VoiceAgentV2AppPage({
     const captureThreshold = useDiagnosticCaptureSettings ? voiceThreshold : 0.025;
     const captureSilenceMs = useDiagnosticCaptureSettings ? silenceMs : 650;
     const captureMaxSegmentMs = useDiagnosticCaptureSettings ? maxSegmentMs : 6000;
-    const captureRecorderWhileListening = useDiagnosticCaptureSettings ? recorderWhileListening : true;
+    const captureRecorderWhileListening = useDiagnosticCaptureSettings ? recorderWhileListening : false;
     stopListenRef.current = false;
     listenLoopRef.current = true;
     setActiveVoiceDestination(voiceDestination);
