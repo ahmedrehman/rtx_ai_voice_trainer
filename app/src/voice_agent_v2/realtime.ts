@@ -56,6 +56,7 @@ export type VoiceAgentV2RealtimeVoicePack = {
   status: VoiceAgentV2RealtimeStatus;
   decision: VoiceAgentV2RealtimeVoicePackDecision;
   audio: Blob | null;
+  transcript: string;
   debug: {
     threshold: number;
     silenceMs: number;
@@ -71,6 +72,9 @@ export type VoiceAgentV2RealtimeVoicePack = {
     mimeType: string;
     size: number;
     reason: string;
+    browserSpeechAvailable?: boolean;
+    browserSpeechFinalDetected?: boolean;
+    browserSpeechText?: string;
   };
 };
 
@@ -97,9 +101,31 @@ export type VoiceAgentV2RealtimeAudioRoundtrip = {
 };
 
 type BrowserAudioContextConstructor = typeof AudioContext;
+type BrowserSpeechRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start: () => void;
+  abort: () => void;
+  onresult: ((event: BrowserSpeechRecognitionEvent) => void) | null;
+  onerror: ((event: { error: string }) => void) | null;
+  onend: (() => void) | null;
+};
+type BrowserSpeechRecognitionEvent = {
+  resultIndex: number;
+  results: ArrayLike<{
+    isFinal: boolean;
+    0: { transcript: string };
+  }>;
+};
+type BrowserSpeechTranscriptCapture = {
+  stop: () => { available: boolean; text: string; finalDetected: boolean };
+};
 
 declare global {
   interface Window {
+    SpeechRecognition?: new () => BrowserSpeechRecognition;
+    webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
     webkitAudioContext?: BrowserAudioContextConstructor;
   }
 }
@@ -184,6 +210,7 @@ export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
   maxRecordMs?: number;
   minVoiceMs?: number;
   mimeType?: string;
+  speechRecognitionLang?: string;
   onSample?: (sample: { rms: number; voiceDetected: boolean }) => void;
   shouldStop?: () => boolean;
   shouldSkipSend?: () => boolean;
@@ -206,10 +233,24 @@ export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
   let mimeType = input.mimeType || "";
   let size = 0;
   let preBufferIncludedMs = 0;
+  let speechCapture: BrowserSpeechTranscriptCapture | null = null;
+  const packOutput = (
+    decision: VoiceAgentV2RealtimeVoicePackDecision,
+    audio: Blob | null,
+    debug: Omit<VoiceAgentV2RealtimeVoicePack["debug"], "browserSpeechAvailable" | "browserSpeechFinalDetected" | "browserSpeechText">
+  ) => {
+    const speech = speechCapture?.stop() || { available: false, text: "", finalDetected: false };
+    return voicePackOutput(startedAt, decision, audio, {
+      ...debug,
+      browserSpeechAvailable: speech.available,
+      browserSpeechFinalDetected: speech.finalDetected,
+      browserSpeechText: speech.text
+    }, speech.text);
+  };
 
   try {
     if (input.shouldSkipSend?.()) {
-      return voicePackOutput(startedAt, "skip_ai_speaking", null, {
+      return packOutput("skip_ai_speaking", null, {
         threshold,
         silenceMs,
         preBufferMs,
@@ -229,6 +270,7 @@ export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
     if (typeof MediaRecorder === "undefined") throw new Error("Browser MediaRecorder API is unavailable.");
     const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextConstructor) throw new Error("Browser AudioContext is unavailable.");
+    speechCapture = startBrowserSpeechTranscriptCapture(input.speechRecognitionLang);
     const context = new AudioContextConstructor();
     const source = context.createMediaStreamSource(input.stream);
     const analyser = context.createAnalyser();
@@ -300,7 +342,7 @@ export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
 
     durationMs = Date.now() - startedMs;
     if (!audio) {
-      return voicePackOutput(startedAt, "skip_no_voice", null, {
+      return packOutput("skip_no_voice", null, {
         threshold,
         silenceMs,
         preBufferMs,
@@ -318,7 +360,7 @@ export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
       });
     }
     if (audio.size <= 0) {
-      return voicePackOutput(startedAt, "skip_empty_audio", null, {
+      return packOutput("skip_empty_audio", null, {
         threshold,
         silenceMs,
         preBufferMs,
@@ -336,7 +378,7 @@ export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
       });
     }
     if (voiceActiveMs < minVoiceMs) {
-      return voicePackOutput(startedAt, "skip_too_short", audio, {
+      return packOutput("skip_too_short", audio, {
         threshold,
         silenceMs,
         preBufferMs,
@@ -353,7 +395,7 @@ export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
         reason: "NOT SEND - voice activity was too short."
       });
     }
-    return voicePackOutput(startedAt, "send_voice_segment", audio, {
+    return packOutput("send_voice_segment", audio, {
       threshold,
       silenceMs,
       preBufferMs,
@@ -370,10 +412,12 @@ export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
       reason: "SEND - voice crossed the threshold and ended after silence."
     });
   } catch (error) {
+    const speech = speechCapture?.stop() || { available: false, text: "", finalDetected: false };
     return {
       status: errorStatus("VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK", startedAt, error),
       decision: "skip_empty_audio",
       audio: null,
+      transcript: speech.text,
       debug: {
         threshold,
         silenceMs,
@@ -388,7 +432,10 @@ export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
         averageRms: averageRms(totalRms, sampleCount),
         mimeType,
         size,
-        reason: error instanceof Error ? error.message : String(error)
+        reason: error instanceof Error ? error.message : String(error),
+        browserSpeechAvailable: speech.available,
+        browserSpeechFinalDetected: speech.finalDetected,
+        browserSpeechText: speech.text
       }
     };
   }
@@ -1082,16 +1129,63 @@ function averageRms(totalRms: number, sampleCount: number) {
   return Number((sampleCount ? totalRms / sampleCount : 0).toFixed(4));
 }
 
+function startBrowserSpeechTranscriptCapture(lang = "fr-FR"): BrowserSpeechTranscriptCapture {
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    return { stop: () => ({ available: false, text: "", finalDetected: false }) };
+  }
+
+  let text = "";
+  let finalDetected = false;
+  let abortExpected = false;
+  const recognition = new Recognition();
+  recognition.lang = lang;
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.onresult = (event) => {
+    const transcripts: string[] = [];
+    for (let index = 0; index < event.results.length; index += 1) {
+      const transcript = event.results[index][0].transcript.trim();
+      if (transcript) transcripts.push(transcript);
+      if (event.results[index].isFinal) finalDetected = true;
+    }
+    text = transcripts.join(" ").trim();
+  };
+  recognition.onerror = (event) => {
+    if (event.error !== "aborted" || !abortExpected) text = text.trim();
+  };
+
+  try {
+    recognition.start();
+  } catch {
+    return { stop: () => ({ available: false, text: "", finalDetected: false }) };
+  }
+
+  return {
+    stop: () => {
+      abortExpected = true;
+      try {
+        recognition.abort();
+      } catch {
+        // Browser cleanup only.
+      }
+      return { available: true, text: text.trim(), finalDetected };
+    }
+  };
+}
+
 function voicePackOutput(
   startedAt: string,
   decision: VoiceAgentV2RealtimeVoicePackDecision,
   audio: Blob | null,
-  debug: VoiceAgentV2RealtimeVoicePack["debug"]
+  debug: VoiceAgentV2RealtimeVoicePack["debug"],
+  transcript = ""
 ): VoiceAgentV2RealtimeVoicePack {
   return {
     status: doneStatus("VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK", startedAt),
     decision,
     audio,
+    transcript,
     debug
   };
 }

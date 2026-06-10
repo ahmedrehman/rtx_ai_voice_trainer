@@ -159,6 +159,7 @@ export function VoiceAgentV2AppPage({
           maxWaitMs: 8000,
           maxRecordMs: captureMaxSegmentMs,
           minVoiceMs: 180,
+          speechRecognitionLang: speechRecognitionLang(settingsRef.current),
           onSample: (sample) => {
             setMicLevel(sample.rms);
             setMicVoiceDetected(sample.voiceDetected);
@@ -243,7 +244,7 @@ export function VoiceAgentV2AppPage({
           speakOn: speakOnRef.current,
           freeChatOn: settingsRef.current.allowFreeChat,
           speakLevel: settingsRef.current.speakLevel,
-          userText: "",
+          userText: pack.transcript,
           aiText: turn.text,
           correctedText: turn.correctionEvent?.text || turn.text,
           correctionLevel,
@@ -262,16 +263,17 @@ export function VoiceAgentV2AppPage({
         }
         if (playbackStarted) await playbackStarted;
 
-        if (appDecision.assistantText || appDecision.shouldKeepAudioLink) {
-          const assistantMessage: VoiceAgentChatMessage & { audioUrl?: string; correctionLevel?: number } = {
+        if (appDecision.chatMessages.length) {
+          const createdAt = new Date().toISOString();
+          const chatMessages: Array<VoiceAgentChatMessage & { audioUrl?: string; correctionLevel?: number }> = appDecision.chatMessages.map((message) => ({
             id: createId(),
-            role: "assistant",
-            text: appDecision.assistantText || "Audio response",
-            createdAt: new Date().toISOString(),
-            audioUrl: appDecision.shouldKeepAudioLink ? audioUrl : undefined,
-            correctionLevel
-          };
-          setMessages((current) => [...current, assistantMessage].slice(-40));
+            role: message.role,
+            text: message.text,
+            createdAt,
+            audioUrl: message.role === "assistant" && message.audioLink ? audioUrl : undefined,
+            correctionLevel: message.role === "assistant" ? correctionLevel : undefined
+          }));
+          setMessages((current) => [...current, ...chatMessages].slice(-40));
         }
 
         if (streamingVoiceStarted) {
@@ -784,6 +786,13 @@ function hasStandardLevelWord(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return hasStandardLevelWord(record.text) || hasStandardLevelWord(record.chat_text_to_user) || hasStandardLevelWord(record.message);
+}
+
+function speechRecognitionLang(settings: VoiceAgentV2Settings) {
+  const languageName = settings.languageName.toLocaleLowerCase();
+  if (languageName.includes("english")) return "en-US";
+  if (languageName.includes("german")) return "de-DE";
+  return "fr-FR";
 }
 
 function pcm16Base64ToFloat32(audioBase64: string) {
