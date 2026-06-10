@@ -577,7 +577,7 @@ function shouldSpeakCorrection(level: number | undefined, settings: VoiceAgentV2
 }
 
 function hasStandardLevelWord(value: unknown) {
-  if (typeof value === "string") return /^\s*(exacte?|mieux|correction)\b/i.test(value);
+  if (typeof value === "string") return /^\s*(signal\s*(?:vert|jaune|orange|rouge)|signal(?:vert|jaune|orange|rouge))\b/i.test(value);
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return hasStandardLevelWord(record.text) || hasStandardLevelWord(record.chat_text_to_user) || hasStandardLevelWord(record.message);

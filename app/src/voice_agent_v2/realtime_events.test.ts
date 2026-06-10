@@ -156,7 +156,7 @@ test("VOICE_AGENT_V2_REALTIME_EVENT_RESULT ignores session instructions", () => 
         instructions: [
           "You are AI Voice Trainer in a realtime speech-to-speech browser app.",
           "Correction mode is enabled.",
-          "For spoken correction labels, use Exacte, Mieux, or Correction.",
+          "For spoken correction labels, use SignalVert, SignalJaune, SignalOrange, or SignalRouge.",
           "Never say the English word Hint."
         ].join(" ")
       }
@@ -171,7 +171,7 @@ test("VOICE_AGENT_V2_REALTIME_EVENT_RESULT reads live voice pack stream events",
   assert.deepEqual(
     VOICE_AGENT_V2_REALTIME_EVENT_RESULT({
       type: "text_delta",
-      text: "Mieux: liaison plus claire."
+      text: "SignalJaune: liaison plus claire."
     }),
     {
       type: "text_delta",
@@ -179,7 +179,7 @@ test("VOICE_AGENT_V2_REALTIME_EVENT_RESULT reads live voice pack stream events",
         correction: 1,
         text: "liaison plus claire.",
         hint: undefined,
-        raw: "Mieux: liaison plus claire."
+        raw: "SignalJaune: liaison plus claire."
       },
       textDelta: "liaison plus claire."
     }
@@ -188,7 +188,7 @@ test("VOICE_AGENT_V2_REALTIME_EVENT_RESULT reads live voice pack stream events",
   assert.deepEqual(
     VOICE_AGENT_V2_REALTIME_EVENT_RESULT({
       type: "done",
-      text: "Correction: Je suis malade."
+      text: "SignalRouge: Je suis malade."
     }),
     {
       type: "done",
@@ -197,9 +197,23 @@ test("VOICE_AGENT_V2_REALTIME_EVENT_RESULT reads live voice pack stream events",
         correction: 3,
         text: "Je suis malade.",
         hint: undefined,
-        raw: "Correction: Je suis malade."
+        raw: "SignalRouge: Je suis malade."
       },
       textDone: "Je suis malade."
+    }
+  );
+});
+
+test("VOICE_AGENT_V2_REALTIME_EVENT_RESULT does not treat old normal words as signal words", () => {
+  assert.deepEqual(
+    VOICE_AGENT_V2_REALTIME_EVENT_RESULT({
+      type: "done",
+      text: "Correction: Je suis malade."
+    }),
+    {
+      type: "done",
+      aiSpeaking: false,
+      textDone: "Correction: Je suis malade."
     }
   );
 });

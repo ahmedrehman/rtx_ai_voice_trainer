@@ -422,10 +422,12 @@ export async function VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK(input: {
           ].join("\n")
         : [
             "This is one user audio pack. Answer only this pack.",
-            "If you speak a level word, use exactly one short standard word at the start: Exacte, Mieux, or Correction.",
-            "Use Mieux for a small pronunciation/accent improvement. Use Correction only for a real vocabulary, meaning, or grammar mistake.",
-            "Small mispronunciations and accent issues are Mieux, not Correction.",
-            "Keep spoken correction text short and natural after the level word.",
+            "If you mark the level, use exactly one app signal word at the start: SignalVert, SignalJaune, SignalOrange, or SignalRouge.",
+            "Use SignalJaune for a small pronunciation/accent improvement.",
+            "Use SignalOrange for vocabulary or meaning problems.",
+            "Use SignalRouge only for a real grammar mistake or severe meaning mistake.",
+            "Small mispronunciations and accent issues are SignalJaune, not SignalRouge.",
+            "Keep spoken correction text short and natural after the signal word.",
             "Never react to your own previous audio if it appears in the microphone input."
           ].join("\n"),
       onEvent: (event) => {
@@ -664,8 +666,8 @@ export function VOICE_AGENT_V2_REALTIME_CREATE_INSTRUCTIONS(settings: VoiceAgent
     mode,
     "Reply with spoken audio directly. Keep every answer very short.",
     "Also emit the same short answer as response transcript/text events when available.",
-    "Speak in the target language. If you speak a correction label, use exactly one short standard word at the start: Exacte, Mieux, or Correction. Never say the English word Hint.",
-    "Use Mieux for small pronunciation/accent improvement. Use Correction only for a real vocabulary, meaning, or grammar mistake. Keep spoken correction text short and natural.",
+    "Speak in the target language. If you mark the level, use exactly one app signal word at the start: SignalVert, SignalJaune, SignalOrange, or SignalRouge. Never say the English word Hint.",
+    "Use SignalJaune for small pronunciation/accent improvement, SignalOrange for vocabulary or meaning problems, and SignalRouge only for a real grammar mistake or severe meaning mistake. Keep spoken correction text short and natural.",
     settings.allowFreeChat
       ? "Answer the user's question naturally. Correct only when the user asks for correction or clearly practices the language."
       : "For practice speech, say only one corrected phrase and one tiny tip when useful. If there is no useful correction, stay silent or give a very short confirmation.",
@@ -786,6 +788,8 @@ function correctionEventFromRecord(record: Record<string, unknown>): VoiceAgentV
 }
 
 function correctionEventFromText(value: string): VoiceAgentV2RealtimeCorrectionEvent | null {
+  const signalEvent = explicitSignalCorrectionEventFromText(value);
+  if (signalEvent) return signalEvent;
   const correction = correctionLevelFromText(value);
   if (correction === null) return null;
   return {
@@ -797,10 +801,10 @@ function correctionEventFromText(value: string): VoiceAgentV2RealtimeCorrectionE
 }
 
 function explicitSignalCorrectionEventFromText(value: string): VoiceAgentV2RealtimeCorrectionEvent | null {
-  const match = value.match(/^\s*(exacte?|mieux|correction)\b\s*[:,-]?\s*(.*)$/i);
+  const match = value.match(/^\s*(signal\s*(?:vert|jaune|orange|rouge)|signal(?:vert|jaune|orange|rouge))\b\s*[:,-]?\s*(.*)$/i);
   if (!match) return null;
-  const word = match[1].toLowerCase();
-  const correction = word.startsWith("exact") ? 0 : word === "mieux" ? 1 : 3;
+  const word = match[1].toLowerCase().replace(/\s+/g, "");
+  const correction = word.endsWith("vert") ? 0 : word.endsWith("jaune") ? 1 : word.endsWith("orange") ? 2 : 3;
   return {
     correction,
     text: match[2]?.trim() || undefined,
@@ -834,17 +838,18 @@ function normalizeCorrectionLevel(value: unknown): 0 | 1 | 2 | 3 | null {
 function correctionLevelFromText(value: string): 0 | 1 | 2 | 3 | null {
   const explicit = value.match(/\b(?:correction(?:_level)?|level|severity|niveau)\s*[:=#-]?\s*([0-3])\b/i);
   if (explicit?.[1]) return Number(explicit[1]) as 0 | 1 | 2 | 3;
+  const signalEvent = explicitSignalCorrectionEventFromText(value);
+  if (signalEvent) return signalEvent.correction;
   const text = value.toLowerCase();
-  if (/\b(no correction|none|ok|correct|exact|exacte)\b/.test(text)) return 0;
-  if (/\b(pronunciation|prononciation|accent|small improvement|slight improvement|minor improvement|mispronunciation|mispronounced|mieux)\b/.test(text)) return 1;
+  if (/\b(no correction|none|ok)\b/.test(text)) return 0;
+  if (/\b(pronunciation|prononciation|accent|small improvement|slight improvement|minor improvement|mispronunciation|mispronounced)\b/.test(text)) return 1;
   if (/\b(vocabulary|vocabulaire|meaning|important improvement|important correction)\b/.test(text)) return 2;
   if (/\b(grammar|grammaire|spelling|orthographe|very wrong)\b/.test(text)) return 3;
-  if (/\b(correction|corrige|corrigee|corrigée|erreur|mistake)\b/.test(text)) return 3;
   return null;
 }
 
 function isCorrectionTextCandidate(value: string) {
-  return /\b(correction(?:_level)?|level|severity|niveau|grammar|grammaire|spelling|orthographe|pronunciation|prononciation|accent|vocabulary|vocabulaire|meaning|hint|tip|conseil|exacte?|mieux|erreur|mistake)\b/i.test(
+  return /\b(signal\s*(?:vert|jaune|orange|rouge)|signal(?:vert|jaune|orange|rouge)|correction(?:_level)?|level|severity|niveau|grammar|grammaire|spelling|orthographe|pronunciation|prononciation|accent|vocabulary|vocabulaire|meaning|hint|tip|conseil)\b/i.test(
     value
   );
 }
@@ -857,7 +862,7 @@ function cleanCorrectionText(value: string) {
   const withoutHint = value.replace(/\b(?:hint|tip|conseil)\s*[:=-]\s*.+$/i, "").trim();
   return withoutHint
     .replace(/^\s*(?:correction(?:_level)?|level|severity|niveau)\s*[:=#-]?\s*[0-3]\s*[:,-]?\s*/i, "")
-    .replace(/^\s*(?:grammar|grammaire|spelling|orthographe|pronunciation|prononciation|accent|vocabulary|vocabulaire|meaning|exacte?|mieux|correction|erreur|mistake)\s*[:=-]?\s*/i, "")
+    .replace(/^\s*(?:signal\s*(?:vert|jaune|orange|rouge)|signal(?:vert|jaune|orange|rouge)|grammar|grammaire|spelling|orthographe|pronunciation|prononciation|accent|vocabulary|vocabulaire|meaning)\s*[:=-]?\s*/i, "")
     .trim();
 }
 
