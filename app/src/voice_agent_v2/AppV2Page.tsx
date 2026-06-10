@@ -231,13 +231,28 @@ export function VoiceAgentV2AppPage({
         setSignal(VOICE_AGENT_V2_SIGNAL(correctionLevel));
         const shouldSpeak = speakOnRef.current && shouldSpeakCorrection(correctionLevel, settingsRef.current);
         streamPlayback.setCorrectionLevel(correctionLevel);
-        if (streamPlayback.started()) await streamPlayback.finish();
-        const audioUrl = turn.audio && !streamPlayback.started() ? URL.createObjectURL(turn.audio.blob) : undefined;
+        const streamingVoiceStarted = streamPlayback.started();
+        const audioUrl = turn.audio && !streamingVoiceStarted ? URL.createObjectURL(turn.audio.blob) : undefined;
         const shouldKeepAudioLink = Boolean(audioUrl && !speakOnRef.current);
+        const chatText = voiceTurnChatText(turn.text, correctionLevel);
         setRealtimeTextDraft("");
         responseTextRef.current = "";
 
-        if (shouldSpeak && audioUrl) {
+        if (chatText || shouldKeepAudioLink) {
+          const assistantMessage: VoiceAgentChatMessage & { audioUrl?: string; correctionLevel?: number } = {
+            id: createId(),
+            role: "assistant",
+            text: chatText || "Audio response",
+            createdAt: new Date().toISOString(),
+            audioUrl: shouldKeepAudioLink ? audioUrl : undefined,
+            correctionLevel
+          };
+          setMessages((current) => [...current, assistantMessage].slice(-40));
+        }
+
+        if (streamingVoiceStarted) {
+          await streamPlayback.finish();
+        } else if (shouldSpeak && audioUrl) {
           try {
             await playAssistantAudio(audioUrl);
           } finally {
@@ -245,17 +260,6 @@ export function VoiceAgentV2AppPage({
           }
         }
 
-        if (turn.text.trim() || shouldKeepAudioLink) {
-          const assistantMessage: VoiceAgentChatMessage & { audioUrl?: string; correctionLevel?: number } = {
-            id: createId(),
-            role: "assistant",
-            text: turn.text.trim() || "Audio response",
-            createdAt: new Date().toISOString(),
-            audioUrl: shouldKeepAudioLink ? audioUrl : undefined,
-            correctionLevel
-          };
-          setMessages((current) => [...current, assistantMessage].slice(-40));
-        }
         if (audioUrl && !shouldSpeak && !shouldKeepAudioLink) {
           URL.revokeObjectURL(audioUrl);
         }
@@ -711,6 +715,16 @@ function signalClass(signal: VoiceAgentV2Signal) {
 function shouldSpeakCorrection(level: number | undefined, settings: VoiceAgentV2Settings) {
   const correctionLevel = Number(level || 0);
   return correctionLevel > 0 && correctionLevel >= settings.speakLevel;
+}
+
+function voiceTurnChatText(text: string, level: number) {
+  const cleaned = stripSignalCodeword(text).trim();
+  if (cleaned) return cleaned;
+  return Number(level || 0) === 0 ? "OK" : "Correction";
+}
+
+function stripSignalCodeword(text: string) {
+  return text.replace(/^\s*(signal\s*(?:vert|jaune|orange|rouge)|signal(?:vert|jaune|orange|rouge))\b\s*[:,-]?\s*/i, "");
 }
 
 function hasStandardLevelWord(value: unknown) {
