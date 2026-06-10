@@ -238,10 +238,14 @@ export function VoiceAgentV2AppPage({
         setRealtimeTextDraft("");
         responseTextRef.current = "";
 
+        let playbackStarted: Promise<void> | null = null;
         let playbackDone: Promise<void> | null = null;
         if (!streamingVoiceStarted && shouldSpeak && audioUrl) {
-          playbackDone = playAssistantAudio(audioUrl).finally(() => URL.revokeObjectURL(audioUrl));
+          const playback = startAssistantAudioPlayback(audioUrl);
+          playbackStarted = playback.started;
+          playbackDone = playback.done.finally(() => URL.revokeObjectURL(audioUrl));
         }
+        if (playbackStarted) await playbackStarted;
 
         if (chatText || shouldKeepAudioLink) {
           const assistantMessage: VoiceAgentChatMessage & { audioUrl?: string; correctionLevel?: number } = {
@@ -457,26 +461,51 @@ export function VoiceAgentV2AppPage({
   }
 
   async function playAssistantAudio(url: string, statusText = "NOT SEND - AI speaking") {
+    const playback = startAssistantAudioPlayback(url, statusText);
+    await playback.done;
+  }
+
+  function startAssistantAudioPlayback(url: string, statusText = "NOT SEND - AI speaking") {
     appSpeakingRef.current = true;
     setPackConnectionState("playing");
     setSendActive(false);
     setSendStatusText(statusText);
-    await new Promise<void>((resolve) => {
-      const player = new Audio(url);
-      audioPlayerRef.current = player;
-      const finish = () => {
-        if (audioPlayerRef.current === player) audioPlayerRef.current = null;
-        appSpeakingRef.current = false;
-        resolve();
-      };
-      player.onended = finish;
-      player.onerror = finish;
-      player.onpause = finish;
-      void player.play().catch((error) => {
+    const player = new Audio(url);
+    audioPlayerRef.current = player;
+    let startedResolved = false;
+    let doneResolved = false;
+    let resolveStarted: () => void = () => undefined;
+    let resolveDone: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    const done = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
+    const markStarted = () => {
+      if (startedResolved) return;
+      startedResolved = true;
+      resolveStarted();
+    };
+    const finish = () => {
+      if (doneResolved) return;
+      doneResolved = true;
+      markStarted();
+      if (audioPlayerRef.current === player) audioPlayerRef.current = null;
+      appSpeakingRef.current = false;
+      resolveDone();
+    };
+    player.onplaying = markStarted;
+    player.onended = finish;
+    player.onerror = finish;
+    player.onpause = finish;
+    void player.play()
+      .then(markStarted)
+      .catch((error) => {
         setTechnical({ status: "audio_play_error", realtime: error instanceof Error ? error.message : String(error) });
         finish();
       });
-    });
+    return { started, done };
   }
 
   function toggleListen() {
