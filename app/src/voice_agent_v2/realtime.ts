@@ -210,6 +210,7 @@ export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
   maxRecordMs?: number;
   minVoiceMs?: number;
   mimeType?: string;
+  enableSpeechRecognitionTranscript?: boolean;
   speechRecognitionLang?: string;
   onSample?: (sample: { rms: number; voiceDetected: boolean }) => void;
   shouldStop?: () => boolean;
@@ -270,7 +271,9 @@ export async function VOICE_AGENT_V2_REALTIME_CAPTURE_VOICE_PACK(input: {
     if (typeof MediaRecorder === "undefined") throw new Error("Browser MediaRecorder API is unavailable.");
     const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextConstructor) throw new Error("Browser AudioContext is unavailable.");
-    speechCapture = startBrowserSpeechTranscriptCapture(input.speechRecognitionLang);
+    if (input.enableSpeechRecognitionTranscript) {
+      speechCapture = startBrowserSpeechTranscriptCapture(input.speechRecognitionLang);
+    }
     const context = new AudioContextConstructor();
     const source = context.createMediaStreamSource(input.stream);
     const analyser = context.createAnalyser();

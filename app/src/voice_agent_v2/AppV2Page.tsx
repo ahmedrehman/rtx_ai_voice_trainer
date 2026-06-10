@@ -159,7 +159,6 @@ export function VoiceAgentV2AppPage({
           maxWaitMs: 8000,
           maxRecordMs: captureMaxSegmentMs,
           minVoiceMs: 180,
-          speechRecognitionLang: speechRecognitionLang(settingsRef.current),
           onSample: (sample) => {
             setMicLevel(sample.rms);
             setMicVoiceDetected(sample.voiceDetected);
@@ -786,13 +785,6 @@ function hasStandardLevelWord(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return hasStandardLevelWord(record.text) || hasStandardLevelWord(record.chat_text_to_user) || hasStandardLevelWord(record.message);
-}
-
-function speechRecognitionLang(settings: VoiceAgentV2Settings) {
-  const languageName = settings.languageName.toLocaleLowerCase();
-  if (languageName.includes("english")) return "en-US";
-  if (languageName.includes("german")) return "de-DE";
-  return "fr-FR";
 }
 
 function pcm16Base64ToFloat32(audioBase64: string) {
