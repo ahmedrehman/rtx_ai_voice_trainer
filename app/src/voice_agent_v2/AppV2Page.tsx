@@ -22,7 +22,7 @@ import {
   type VoiceAgentV2RealtimeVoicePack,
   type VoiceAgentV2RealtimeVoicePackTurn
 } from "./realtime";
-import type { VoiceAgentChatMessage, VoiceAgentPromptConfig, VoiceAgentTopicId } from "../voice_agent";
+import type { VoiceAgentChatMessage, VoiceAgentPromptConfig, VoiceAgentStreamVoiceTurnEvent, VoiceAgentTopicId } from "../voice_agent";
 
 type VoiceAgentV2VoiceDestination = "ai" | "server_roundtrip";
 
@@ -70,6 +70,7 @@ export function VoiceAgentV2AppPage({
   const listenLoopRef = useRef(false);
   const appSpeakingRef = useRef(false);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const streamAudioPlayerRef = useRef<{ stop: () => void } | null>(null);
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -212,11 +213,15 @@ export function VoiceAgentV2AppPage({
           continue;
         }
 
+        const streamPlayback = createVoiceStreamPlayback();
         const turn = await VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK({
           settings: settingsRef.current,
           audio: pack.audio,
           visibleHistory: VOICE_AGENT_V2_VISIBLE_HISTORY(messagesRef.current),
-          onEvent: handleVoicePackEvent
+          onEvent: (event) => {
+            handleVoicePackEvent(event);
+            streamPlayback.handleEvent(event);
+          }
         });
         setLatestTurn(turn);
         setTechnical(turn);
@@ -225,7 +230,9 @@ export function VoiceAgentV2AppPage({
         const correctionLevel = turn.correctionEvent?.correction ?? 0;
         setSignal(VOICE_AGENT_V2_SIGNAL(correctionLevel));
         const shouldSpeak = speakOnRef.current && shouldSpeakCorrection(correctionLevel, settingsRef.current);
-        const audioUrl = turn.audio ? URL.createObjectURL(turn.audio.blob) : undefined;
+        streamPlayback.setCorrectionLevel(correctionLevel);
+        if (streamPlayback.started()) await streamPlayback.finish();
+        const audioUrl = turn.audio && !streamPlayback.started() ? URL.createObjectURL(turn.audio.blob) : undefined;
         const shouldKeepAudioLink = Boolean(audioUrl && !speakOnRef.current);
         setRealtimeTextDraft("");
         responseTextRef.current = "";
@@ -278,6 +285,8 @@ export function VoiceAgentV2AppPage({
     localStreamRef.current = null;
     audioPlayerRef.current?.pause();
     audioPlayerRef.current = null;
+    streamAudioPlayerRef.current?.stop();
+    streamAudioPlayerRef.current = null;
     appSpeakingRef.current = false;
     setPackConnectionState("idle");
     setSendActive(false);
@@ -295,6 +304,134 @@ export function VoiceAgentV2AppPage({
       type,
       event: summarizeVoicePackEvent(event)
     }, ...current].slice(0, 40));
+  }
+
+  function createVoiceStreamPlayback() {
+    let context: AudioContext | null = null;
+    let scheduledAt = 0;
+    let decision: "waiting" | "play" | "drop" = "waiting";
+    let didStart = false;
+    let finished = false;
+    let stopped = false;
+    let finishTimer = 0;
+    const pendingAudio: string[] = [];
+    let resolveDone: () => void = () => undefined;
+    const done = new Promise<void>((resolve) => {
+      resolveDone = resolve;
+    });
+
+    const controller = {
+      handleEvent(event: VoiceAgentStreamVoiceTurnEvent) {
+        if (stopped) return;
+        const result = VOICE_AGENT_V2_REALTIME_EVENT_RESULT(event);
+        if (result.correctionEvent && (!settingsRef.current.allowFreeChat || hasStandardLevelWord(result.correctionEvent.raw))) {
+          controller.setCorrectionLevel(result.correctionEvent.correction);
+        }
+        if (event.type !== "audio_delta" || !event.audioBase64) return;
+        if (decision === "play") {
+          schedulePcm16Chunk(event.audioBase64);
+          return;
+        }
+        if (decision === "waiting") pendingAudio.push(event.audioBase64);
+      },
+      setCorrectionLevel(level: number) {
+        if (decision !== "waiting") return;
+        if (!speakOnRef.current || !shouldSpeakCorrection(level, settingsRef.current)) {
+          decision = "drop";
+          pendingAudio.length = 0;
+          if (finished) complete();
+          return;
+        }
+        decision = "play";
+        startPlaybackState();
+        pendingAudio.splice(0).forEach(schedulePcm16Chunk);
+      },
+      started() {
+        return didStart;
+      },
+      finish() {
+        finished = true;
+        if (decision === "waiting") {
+          decision = "drop";
+          pendingAudio.length = 0;
+        }
+        if (decision !== "play" || !didStart) {
+          complete();
+          return Promise.resolve();
+        }
+        scheduleCompleteWhenAudioEnds();
+        return done;
+      },
+      stop() {
+        stopped = true;
+        pendingAudio.length = 0;
+        window.clearTimeout(finishTimer);
+        complete();
+      }
+    };
+
+    streamAudioPlayerRef.current = controller;
+    return controller;
+
+    function startPlaybackState() {
+      if (didStart) return;
+      didStart = true;
+      appSpeakingRef.current = true;
+      setPackConnectionState("playing");
+      setSendActive(false);
+      setSendStatusText("NOT SEND - AI speaking");
+    }
+
+    function ensureContext() {
+      if (context) return context;
+      const AudioContextConstructor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextConstructor) throw new Error("Browser AudioContext is unavailable.");
+      context = new AudioContextConstructor();
+      scheduledAt = context.currentTime + 0.02;
+      return context;
+    }
+
+    function schedulePcm16Chunk(audioBase64: string) {
+      if (stopped) return;
+      try {
+        startPlaybackState();
+        const audioContext = ensureContext();
+        const samples = pcm16Base64ToFloat32(audioBase64);
+        if (!samples.length) return;
+        const buffer = audioContext.createBuffer(1, samples.length, 24000);
+        buffer.copyToChannel(samples, 0);
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination);
+        scheduledAt = Math.max(scheduledAt, audioContext.currentTime + 0.01);
+        source.start(scheduledAt);
+        scheduledAt += buffer.duration;
+        if (finished) scheduleCompleteWhenAudioEnds();
+      } catch (error) {
+        setTechnical({ status: "audio_play_error", realtime: error instanceof Error ? error.message : String(error) });
+        complete();
+      }
+    }
+
+    function scheduleCompleteWhenAudioEnds() {
+      if (!context) {
+        complete();
+        return;
+      }
+      window.clearTimeout(finishTimer);
+      const remainingMs = Math.max(0, (scheduledAt - context.currentTime) * 1000) + 120;
+      finishTimer = window.setTimeout(complete, remainingMs);
+    }
+
+    function complete() {
+      if (streamAudioPlayerRef.current === controller) streamAudioPlayerRef.current = null;
+      window.clearTimeout(finishTimer);
+      appSpeakingRef.current = false;
+      const audioContext = context;
+      context = null;
+      if (audioContext?.state !== "closed") void audioContext?.close().catch(() => undefined);
+      resolveDone();
+    }
   }
 
   function handleVoicePackEvent(event: unknown) {
@@ -581,6 +718,20 @@ function hasStandardLevelWord(value: unknown) {
   if (!value || typeof value !== "object") return false;
   const record = value as Record<string, unknown>;
   return hasStandardLevelWord(record.text) || hasStandardLevelWord(record.chat_text_to_user) || hasStandardLevelWord(record.message);
+}
+
+function pcm16Base64ToFloat32(audioBase64: string) {
+  const binary = atob(audioBase64);
+  const sampleCount = Math.floor(binary.length / 2);
+  const samples = new Float32Array(sampleCount);
+  for (let index = 0; index < sampleCount; index += 1) {
+    const low = binary.charCodeAt(index * 2);
+    const high = binary.charCodeAt(index * 2 + 1);
+    const value = (high << 8) | low;
+    const signed = value >= 0x8000 ? value - 0x10000 : value;
+    samples[index] = Math.max(-1, Math.min(1, signed / 0x8000));
+  }
+  return samples;
 }
 
 function createId() {
