@@ -238,6 +238,11 @@ export function VoiceAgentV2AppPage({
         setRealtimeTextDraft("");
         responseTextRef.current = "";
 
+        let playbackDone: Promise<void> | null = null;
+        if (!streamingVoiceStarted && shouldSpeak && audioUrl) {
+          playbackDone = playAssistantAudio(audioUrl).finally(() => URL.revokeObjectURL(audioUrl));
+        }
+
         if (chatText || shouldKeepAudioLink) {
           const assistantMessage: VoiceAgentChatMessage & { audioUrl?: string; correctionLevel?: number } = {
             id: createId(),
@@ -252,12 +257,8 @@ export function VoiceAgentV2AppPage({
 
         if (streamingVoiceStarted) {
           await streamPlayback.finish();
-        } else if (shouldSpeak && audioUrl) {
-          try {
-            await playAssistantAudio(audioUrl);
-          } finally {
-            URL.revokeObjectURL(audioUrl);
-          }
+        } else if (playbackDone) {
+          await playbackDone;
         }
 
         if (audioUrl && !shouldSpeak && !shouldKeepAudioLink) {
