@@ -65,7 +65,8 @@ export function VOICE_AGENT_V2_CREATE_PROMPTS(settings: VoiceAgentV2Settings): V
         `Topic/context: ${settings.topic}.`,
         `Target language/topic language: ${settings.languageName}.`,
         "Free chat mode is enabled. Answer the user's question or message normally.",
-        "You may use the topic as context, but you do not need to correct unless the user explicitly asks for correction.",
+        "Do not translate unless the user asks for translation.",
+        "Do not correct unless the user explicitly asks for correction or says they are practicing and want feedback.",
         "Do not include technical prompts, internal rules, or JSON field names in chat_text_to_user."
       ].join("\n"),
       howToRespond: [
@@ -96,7 +97,8 @@ export function VOICE_AGENT_V2_CREATE_PROMPTS(settings: VoiceAgentV2Settings): V
       "chat_text_to_user is the chat text and possible speech text.",
       "For corrections, chat_text_to_user must be the short correction only.",
       "Set has_corrections true when there is a useful correction.",
-      "Use correction_type pronunciation/accent for level 1, vocabulary/meaning for level 2, grammar for level 3.",
+      "Use correction_type pronunciation/accent for level 1 only. Small pronunciation or accent issues are not high-level mistakes.",
+      "Use correction_type vocabulary/meaning for level 2. Use correction_type grammar for level 3 only when the sentence is actually grammatically wrong.",
       "Do not output prose outside JSON."
     ].join("\n"),
     responseJsonFormat: responseJsonFormat()

@@ -949,12 +949,18 @@ export async function VOICE_AGENT_SERVER_STREAM_VOICE_TURN(config: ServerAiConfi
     "Return user-facing answer text and spoken audio through the stream.",
     "Do not return JSON, markdown, field names, flags, debug text, or internal analysis.",
     "Keep the answer short and natural.",
-    "For practice utterances, correct or confirm the user's latest sentence.",
-    "If there is a concrete mistake, give the corrected sentence and one short hint.",
-    "If the sentence is correct, say it is correct and optionally give one tiny hint.",
     settings.allowFreeChat
-      ? "Free chat is enabled: answer normal questions naturally, but still correct practice phrases first."
+      ? "Free chat is enabled: act as a normal helpful chat assistant. Answer questions and requests directly. Do not translate unless the user asks for translation. Do not correct unless the user explicitly asks for correction or feedback."
       : "Free chat is disabled: do not greet, start small talk, or continue open conversation. Only correct, confirm, or give one short hint.",
+    settings.allowFreeChat
+      ? "If the user asks a question, answer the question. Do not treat questions as language exercises."
+      : "For practice utterances, correct or confirm the user's latest sentence.",
+    settings.allowFreeChat
+      ? "Only give language correction feedback when the user clearly asks for correction, practice feedback, or improvement."
+      : "If there is a concrete mistake, give the corrected sentence and one short hint.",
+    settings.allowFreeChat
+      ? "If the user asks what something means or what something is about, explain it; do not translate it unless translation is requested."
+      : "If the sentence is correct, say it is correct and optionally give one tiny hint.",
     body.additionalInstructions || ""
   ].filter(Boolean).join("\n");
   const taskPrompt = [

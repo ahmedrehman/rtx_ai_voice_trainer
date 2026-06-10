@@ -412,19 +412,35 @@ export async function VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK(input: {
       audio: input.audio,
       textUserChat: "",
       history5LastTextChats: input.settings.allowFreeChat ? VOICE_AGENT_V2_VISIBLE_HISTORY_TEXT(input.visibleHistory) : [],
-      additionalInstructions: [
-        "This is one VAD-approved voice pack. Answer only this pack.",
-        "Use one short signal word when useful: Exacte for no correction, Mieux for a small improvement, Correction for a real mistake.",
-        "Never react to your own previous audio if it appears in the microphone input."
-      ].join("\n"),
+      additionalInstructions: input.settings.allowFreeChat
+        ? [
+            "This is one user audio pack. Treat it as the current user message.",
+            "Free chat is enabled: answer the user's question or request normally.",
+            "Do not translate unless the user explicitly asks for translation.",
+            "Do not correct unless the user explicitly asks for correction or feedback.",
+            "Never react to your own previous audio if it appears in the microphone input."
+          ].join("\n")
+        : [
+            "This is one user audio pack. Answer only this pack.",
+            "If you speak a level word, use exactly one short standard word at the start: Exacte, Mieux, or Correction.",
+            "Use Mieux for a small pronunciation/accent improvement. Use Correction only for a real vocabulary, meaning, or grammar mistake.",
+            "Small mispronunciations and accent issues are Mieux, not Correction.",
+            "Keep spoken correction text short and natural after the level word.",
+            "Never react to your own previous audio if it appears in the microphone input."
+          ].join("\n"),
       onEvent: (event) => {
         events.push(event);
         const eventResult = VOICE_AGENT_V2_REALTIME_EVENT_RESULT(event);
-        if (eventResult.correctionEvent) correctionEvent = eventResult.correctionEvent;
+        const eventCorrection = input.settings.allowFreeChat
+          ? explicitSignalCorrectionEventFromText(extractRealtimeText(event))
+          : eventResult.correctionEvent;
+        if (eventCorrection) correctionEvent = eventCorrection;
         input.onEvent?.(event);
       }
     });
-    const finalCorrection = correctionEvent || VOICE_AGENT_V2_REALTIME_EVENT_RESULT({ type: "done", text: result.text }).correctionEvent;
+    const finalCorrection = correctionEvent || (input.settings.allowFreeChat
+      ? explicitSignalCorrectionEventFromText(result.text)
+      : VOICE_AGENT_V2_REALTIME_EVENT_RESULT({ type: "done", text: result.text }).correctionEvent);
     return {
       status: result.status.ok
         ? doneStatus("VOICE_AGENT_V2_REALTIME_SEND_VOICE_PACK", startedAt)
@@ -648,7 +664,8 @@ export function VOICE_AGENT_V2_REALTIME_CREATE_INSTRUCTIONS(settings: VoiceAgent
     mode,
     "Reply with spoken audio directly. Keep every answer very short.",
     "Also emit the same short answer as response transcript/text events when available.",
-    "Speak in the target language. For spoken correction labels, use only these natural words: Exacte for no correction, Mieux for improvement, Correction for a real mistake. Never say the English word Hint.",
+    "Speak in the target language. If you speak a correction label, use exactly one short standard word at the start: Exacte, Mieux, or Correction. Never say the English word Hint.",
+    "Use Mieux for small pronunciation/accent improvement. Use Correction only for a real vocabulary, meaning, or grammar mistake. Keep spoken correction text short and natural.",
     settings.allowFreeChat
       ? "Answer the user's question naturally. Correct only when the user asks for correction or clearly practices the language."
       : "For practice speech, say only one corrected phrase and one tiny tip when useful. If there is no useful correction, stay silent or give a very short confirmation.",
@@ -779,6 +796,19 @@ function correctionEventFromText(value: string): VoiceAgentV2RealtimeCorrectionE
   };
 }
 
+function explicitSignalCorrectionEventFromText(value: string): VoiceAgentV2RealtimeCorrectionEvent | null {
+  const match = value.match(/^\s*(exacte?|mieux|correction)\b\s*[:,-]?\s*(.*)$/i);
+  if (!match) return null;
+  const word = match[1].toLowerCase();
+  const correction = word.startsWith("exact") ? 0 : word === "mieux" ? 1 : 3;
+  return {
+    correction,
+    text: match[2]?.trim() || undefined,
+    hint: undefined,
+    raw: value
+  };
+}
+
 function parseMaybeJson(value: unknown) {
   if (typeof value !== "string") return value;
   try {
@@ -806,10 +836,10 @@ function correctionLevelFromText(value: string): 0 | 1 | 2 | 3 | null {
   if (explicit?.[1]) return Number(explicit[1]) as 0 | 1 | 2 | 3;
   const text = value.toLowerCase();
   if (/\b(no correction|none|ok|correct|exact|exacte)\b/.test(text)) return 0;
-  if (/\b(grammar|grammaire|spelling|orthographe|very wrong)\b/.test(text)) return 3;
+  if (/\b(pronunciation|prononciation|accent|small improvement|slight improvement|minor improvement|mispronunciation|mispronounced|mieux)\b/.test(text)) return 1;
   if (/\b(vocabulary|vocabulaire|meaning|important improvement|important correction)\b/.test(text)) return 2;
+  if (/\b(grammar|grammaire|spelling|orthographe|very wrong)\b/.test(text)) return 3;
   if (/\b(correction|corrige|corrigee|corrigée|erreur|mistake)\b/.test(text)) return 3;
-  if (/\b(pronunciation|prononciation|accent|small improvement|slight improvement|mieux)\b/.test(text)) return 1;
   return null;
 }
 

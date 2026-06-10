@@ -224,23 +224,33 @@ export function VoiceAgentV2AppPage({
 
         const correctionLevel = turn.correctionEvent?.correction ?? 0;
         setSignal(VOICE_AGENT_V2_SIGNAL(correctionLevel));
+        const shouldSpeak = speakOnRef.current && shouldSpeakCorrection(correctionLevel, settingsRef.current);
         const audioUrl = turn.audio ? URL.createObjectURL(turn.audio.blob) : undefined;
-        if (turn.text.trim() || audioUrl) {
+        const shouldKeepAudioLink = Boolean(audioUrl && !speakOnRef.current);
+        setRealtimeTextDraft("");
+        responseTextRef.current = "";
+
+        if (shouldSpeak && audioUrl) {
+          try {
+            await playAssistantAudio(audioUrl);
+          } finally {
+            URL.revokeObjectURL(audioUrl);
+          }
+        }
+
+        if (turn.text.trim() || shouldKeepAudioLink) {
           const assistantMessage: VoiceAgentChatMessage & { audioUrl?: string; correctionLevel?: number } = {
             id: createId(),
             role: "assistant",
             text: turn.text.trim() || "Audio response",
             createdAt: new Date().toISOString(),
-            audioUrl,
+            audioUrl: shouldKeepAudioLink ? audioUrl : undefined,
             correctionLevel
           };
           setMessages((current) => [...current, assistantMessage].slice(-40));
         }
-        setRealtimeTextDraft("");
-        responseTextRef.current = "";
-
-        if (speakOnRef.current && audioUrl) {
-          await playAssistantAudio(audioUrl);
+        if (audioUrl && !shouldSpeak && !shouldKeepAudioLink) {
+          URL.revokeObjectURL(audioUrl);
         }
         setPackConnectionState("listening");
         setSendActive(false);
@@ -290,15 +300,17 @@ export function VoiceAgentV2AppPage({
   function handleVoicePackEvent(event: unknown) {
     const result = VOICE_AGENT_V2_REALTIME_EVENT_RESULT(event);
     addVoiceEvent(result.type, event);
-    if (result.correctionEvent) setSignal(VOICE_AGENT_V2_SIGNAL(result.correctionEvent.correction));
+    if (result.correctionEvent && (!settingsRef.current.allowFreeChat || hasStandardLevelWord(result.correctionEvent.raw))) {
+      setSignal(VOICE_AGENT_V2_SIGNAL(result.correctionEvent.correction));
+    }
     if (result.error) setTechnical({ status: "voice_pack_error", realtime: result.error, event });
     if (result.textDelta) {
       responseTextRef.current = `${responseTextRef.current}${result.textDelta}`;
-      setRealtimeTextDraft(responseTextRef.current);
+      if (!speakOnRef.current) setRealtimeTextDraft(responseTextRef.current);
     }
     if (result.textDone) {
       responseTextRef.current = result.textDone || responseTextRef.current;
-      setRealtimeTextDraft(responseTextRef.current);
+      if (!speakOnRef.current) setRealtimeTextDraft(responseTextRef.current);
     }
   }
 
@@ -338,12 +350,14 @@ export function VoiceAgentV2AppPage({
     setTechnical(result);
     if (!result.chatMessage) return;
     const assistantMessage = result.chatMessage;
+    const shouldKeepAudio = Boolean(result.audio && !speakOnRef.current);
+    const shouldSpeak = Boolean(result.audio && speakOnRef.current && shouldSpeakCorrection(result.correctionLevel, settingsRef.current));
     setMessages((current) => [...current, {
       ...assistantMessage,
-      audioUrl: result.audio?.url,
+      audioUrl: shouldKeepAudio ? result.audio?.url : undefined,
       correctionLevel: result.correctionLevel
     }].slice(-40));
-    if (speakOnRef.current && result.audio) void new Audio(result.audio.url).play().catch(() => undefined);
+    if (shouldSpeak && result.audio) void new Audio(result.audio.url).play().catch(() => undefined);
   }
 
   function changeTopic(topicId: VoiceAgentTopicId) {
@@ -555,6 +569,18 @@ function signalClass(signal: VoiceAgentV2Signal) {
   if (signal === "orange") return "orange";
   if (signal === "red") return "mistake";
   return "idle";
+}
+
+function shouldSpeakCorrection(level: number | undefined, settings: VoiceAgentV2Settings) {
+  const correctionLevel = Number(level || 0);
+  return correctionLevel > 0 && correctionLevel >= settings.speakLevel;
+}
+
+function hasStandardLevelWord(value: unknown) {
+  if (typeof value === "string") return /^\s*(exacte?|mieux|correction)\b/i.test(value);
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return hasStandardLevelWord(record.text) || hasStandardLevelWord(record.chat_text_to_user) || hasStandardLevelWord(record.message);
 }
 
 function createId() {
