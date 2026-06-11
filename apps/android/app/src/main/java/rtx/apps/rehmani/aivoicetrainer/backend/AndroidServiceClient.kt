@@ -1,4 +1,4 @@
-package net.lernspass.aivoicetrainer.backend
+package rtx.apps.rehmani.aivoicetrainer.backend
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

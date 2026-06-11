@@ -1,4 +1,4 @@
-package net.lernspass.aivoicetrainer.ui.theme
+package rtx.apps.rehmani.aivoicetrainer.ui.theme
 
 import android.os.Build
 import androidx.compose.material3.MaterialTheme

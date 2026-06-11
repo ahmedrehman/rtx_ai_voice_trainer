@@ -1,4 +1,4 @@
-package net.lernspass.aivoicetrainer.ui
+package rtx.apps.rehmani.aivoicetrainer.ui
 
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -70,11 +70,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import net.lernspass.aivoicetrainer.AppConfig
-import net.lernspass.aivoicetrainer.backend.AndroidServiceClient
-import net.lernspass.aivoicetrainer.model.ChatMessage
-import net.lernspass.aivoicetrainer.model.SignalLevel
-import net.lernspass.aivoicetrainer.model.SpeakLevel
+import rtx.apps.rehmani.aivoicetrainer.AppConfig
+import rtx.apps.rehmani.aivoicetrainer.backend.AndroidServiceClient
+import rtx.apps.rehmani.aivoicetrainer.model.ChatMessage
+import rtx.apps.rehmani.aivoicetrainer.model.SignalLevel
+import rtx.apps.rehmani.aivoicetrainer.model.SpeakLevel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

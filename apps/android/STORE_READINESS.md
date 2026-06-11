@@ -2,6 +2,7 @@
 
 ## Build Variants
 
+- Play package id: `rtx.apps.rehmani.aivoicetrainer`
 - `localDebug`: emulator/local testing. Uses `http://10.0.2.2:5173`.
 - `prodDebug`: production backend debug testing.
 - `prodRelease`: Play Store build. Uses `https://aitutor.lernspass.net`.

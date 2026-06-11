@@ -1,4 +1,4 @@
-package net.lernspass.aivoicetrainer.model
+package rtx.apps.rehmani.aivoicetrainer.model
 
 enum class SignalLevel {
     Green,
