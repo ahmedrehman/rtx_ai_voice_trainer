@@ -24,11 +24,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.SettingsVoice
 import androidx.compose.material.icons.filled.Speaker
 import androidx.compose.material3.AssistChip
@@ -273,7 +273,7 @@ private fun TrainerScreen(
             )
             Spacer(Modifier.width(8.dp))
             IconButton(onClick = onSend) {
-                Icon(Icons.Filled.Send, contentDescription = "Send")
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
             }
         }
     }
