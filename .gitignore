@@ -13,3 +13,7 @@ app/local-data/
 app/wrangler-login.*.log
 local-server*.log
 logs/
+private/
+*.jks
+*.keystore
+keystore.properties
