@@ -23,6 +23,11 @@ final class TrainerViewModel: ObservableObject {
     @Published var aiSpeaking = false {
         didSet { realtime.setListenOn(listenOn, aiSpeaking: aiSpeaking) }
     }
+    @Published var exactVoicePackStatus = "No exact voice pack recorded"
+    @Published var exactVoicePackBytes = 0
+    @Published var exactRoundtripBytes = 0
+    @Published var exactAIText = ""
+    @Published var exactAIEvents = ""
 
     let audioSession = AudioSessionManager()
     let micMonitor = MicrophoneLevelMonitor()
@@ -41,6 +46,9 @@ final class TrainerViewModel: ObservableObject {
     var remoteAudioMuted: Bool { realtime.remoteAudioMuted }
 
     private var apiClient: APIClient { APIClient(config: config) }
+    private var exactVoicePackData: Data?
+    private var exactRoundtripData: Data?
+    private var exactAIData: Data?
 
     func prepareAudioSession() async {
         await audioSession.configureForVoiceChat()
@@ -185,6 +193,117 @@ final class TrainerViewModel: ObservableObject {
             roundtrip.storeReturned(data: result.data, contentType: result.contentType, byteCount: result.byteCount)
         } catch {
             roundtrip.status = error.localizedDescription
+        }
+    }
+
+    func startExactVoicePackTest() {
+        lastError = nil
+        exactVoicePackStatus = "Starting exact voice pack"
+        Task {
+            await prepareAudioSession()
+            do {
+                try voiceRecorder.start()
+                exactVoicePackData = nil
+                exactRoundtripData = nil
+                exactAIData = nil
+                exactAIText = ""
+                exactAIEvents = ""
+                exactVoicePackBytes = 0
+                exactRoundtripBytes = 0
+                exactVoicePackStatus = "Recording exact app voice pack"
+            } catch {
+                exactVoicePackStatus = error.localizedDescription
+                lastError = error.localizedDescription
+            }
+        }
+    }
+
+    func stopExactVoicePackTest() {
+        do {
+            let data = try voiceRecorder.stop()
+            exactVoicePackData = data
+            exactVoicePackBytes = data.count
+            exactVoicePackStatus = data.isEmpty ? "Exact voice pack is empty" : "Exact voice pack ready"
+        } catch {
+            exactVoicePackStatus = error.localizedDescription
+            lastError = error.localizedDescription
+        }
+    }
+
+    func playExactVoicePack() {
+        guard let exactVoicePackData else {
+            exactVoicePackStatus = "Record an exact voice pack first"
+            return
+        }
+        do {
+            try speaker.play(data: exactVoicePackData)
+        } catch {
+            exactVoicePackStatus = error.localizedDescription
+        }
+    }
+
+    func sendExactVoicePackRoundtrip() async {
+        guard let exactVoicePackData else {
+            exactVoicePackStatus = "Record an exact voice pack first"
+            return
+        }
+        do {
+            exactVoicePackStatus = "Sending exact voice pack to server echo"
+            let result = try await apiClient.audioRoundtrip(data: exactVoicePackData, contentType: "audio/wav")
+            exactRoundtripData = result.data
+            exactRoundtripBytes = result.data.count
+            exactVoicePackStatus = "Server echo returned \(result.data.count) bytes"
+        } catch {
+            exactVoicePackStatus = error.localizedDescription
+            lastError = error.localizedDescription
+        }
+    }
+
+    func playExactRoundtrip() {
+        guard let exactRoundtripData else {
+            exactVoicePackStatus = "Send exact server echo first"
+            return
+        }
+        do {
+            try speaker.play(data: exactRoundtripData)
+        } catch {
+            exactVoicePackStatus = error.localizedDescription
+        }
+    }
+
+    func sendExactVoicePackToAIStream() async {
+        guard let exactVoicePackData else {
+            exactVoicePackStatus = "Record an exact voice pack first"
+            return
+        }
+        do {
+            exactVoicePackStatus = "Sending exact voice pack to AI stream"
+            let result = try await apiClient.voiceTurnStream(
+                audioData: exactVoicePackData,
+                audioFormat: "wav",
+                history: recentHistory(),
+                topic: selectedTopic,
+                freeChatOn: freeChatOn
+            )
+            exactAIData = result.audioData
+            exactAIText = result.text
+            exactAIEvents = result.events.joined(separator: ", ")
+            exactVoicePackStatus = "AI stream returned \(result.audioData?.count ?? 0) audio bytes"
+        } catch {
+            exactVoicePackStatus = error.localizedDescription
+            lastError = error.localizedDescription
+        }
+    }
+
+    func playExactAIResponse() {
+        guard let exactAIData else {
+            exactVoicePackStatus = "Send exact AI stream first"
+            return
+        }
+        do {
+            try speaker.play(data: exactAIData)
+        } catch {
+            exactVoicePackStatus = error.localizedDescription
         }
     }
 

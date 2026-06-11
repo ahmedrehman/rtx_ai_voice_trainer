@@ -79,6 +79,56 @@ struct DebugView: View {
                     }
                 }
 
+                Section("Exact App Audio") {
+                    HStack {
+                        Button("Record exact pack") {
+                            viewModel.startExactVoicePackTest()
+                        }
+                        Button("Stop") {
+                            viewModel.stopExactVoicePackTest()
+                        }
+                    }
+
+                    Button("Play exact pack") {
+                        viewModel.playExactVoicePack()
+                    }
+                    .disabled(viewModel.exactVoicePackBytes == 0)
+
+                    Button("Send exact server echo") {
+                        Task { await viewModel.sendExactVoicePackRoundtrip() }
+                    }
+                    .disabled(viewModel.exactVoicePackBytes == 0)
+
+                    Button("Play server echo") {
+                        viewModel.playExactRoundtrip()
+                    }
+                    .disabled(viewModel.exactRoundtripBytes == 0)
+
+                    Button("Send exact AI stream") {
+                        Task { await viewModel.sendExactVoicePackToAIStream() }
+                    }
+                    .disabled(viewModel.exactVoicePackBytes == 0)
+
+                    Button("Play exact AI response") {
+                        viewModel.playExactAIResponse()
+                    }
+                    .disabled(viewModel.exactAIText.isEmpty)
+
+                    LabeledContent("Status", value: viewModel.exactVoicePackStatus)
+                    LabeledContent("Recorded", value: "\(viewModel.exactVoicePackBytes) bytes")
+                    LabeledContent("Echo", value: "\(viewModel.exactRoundtripBytes) bytes")
+                    if !viewModel.exactAIText.isEmpty {
+                        Text(viewModel.exactAIText)
+                            .font(.footnote)
+                            .textSelection(.enabled)
+                    }
+                    if !viewModel.exactAIEvents.isEmpty {
+                        Text(viewModel.exactAIEvents)
+                            .font(.footnote.monospaced())
+                            .textSelection(.enabled)
+                    }
+                }
+
                 Section("Server Roundtrip") {
                     HStack {
                         Button("Record sample") {
