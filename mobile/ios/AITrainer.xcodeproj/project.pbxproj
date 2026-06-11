@@ -20,6 +20,7 @@
 		A1000000000000000000000B /* TrainerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000B /* TrainerView.swift */; };
 		A1000000000000000000000C /* DebugView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000C /* DebugView.swift */; };
 		A1000000000000000000000D /* VoiceTurnRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000000000000000000000F /* VoiceTurnRecorder.swift */; };
+		A1000000000000000000000E /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000010 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -38,6 +39,7 @@
 		A2000000000000000000000D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A2000000000000000000000E /* AITrainer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AITrainer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000000000000000000000F /* VoiceTurnRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceTurnRecorder.swift; sourceTree = "<group>"; };
+		A20000000000000000000010 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +77,7 @@
 				A2000000000000000000000B /* TrainerView.swift */,
 				A2000000000000000000000C /* DebugView.swift */,
 				A2000000000000000000000F /* VoiceTurnRecorder.swift */,
+				A20000000000000000000010 /* Assets.xcassets */,
 				A2000000000000000000000D /* Info.plist */,
 			);
 			path = AITrainer;
@@ -146,6 +149,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1000000000000000000000E /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -190,7 +194,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.aitutor.voicetrainer;
+				PRODUCT_BUNDLE_IDENTIFIER = "ch.rehman.rtx-ai-voicetrainer";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -213,7 +217,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.aitutor.voicetrainer;
+				PRODUCT_BUNDLE_IDENTIFIER = "ch.rehman.rtx-ai-voicetrainer";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
